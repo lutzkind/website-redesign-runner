@@ -1,0 +1,23 @@
+services:
+  runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      WEBSITE_REDESIGN_HOST: 0.0.0.0
+      WEBSITE_REDESIGN_PORT: 4321
+      WEBSITE_REDESIGN_PUBLIC_BASE_URL: ${SERVICE_FQDN_RUNNER}
+      WEBSITE_REDESIGN_MODEL: ${WEBSITE_REDESIGN_MODEL:-opencode/big-pickle}
+      WEBSITE_REDESIGN_ROOT: /data
+      WEBSITE_REDESIGN_SKILLS_DIR: /app/skills
+      WEBSITE_REDESIGN_DEFAULT_INDUSTRY: ${WEBSITE_REDESIGN_DEFAULT_INDUSTRY:-general}
+      WEBSITE_REDESIGN_DEFAULT_SKILLS: ${WEBSITE_REDESIGN_DEFAULT_SKILLS:-website-audit,design-direction,layout-composer,frontend-art-direction,design-critic}
+    volumes:
+      - ./runner-data:/data
+      - /root/.config/opencode:/root/.config/opencode:ro
+      - /root/.local/share/opencode:/root/.local/share/opencode
+      - /root/.config/gws:/root/.config/gws
+      - /root/cli-persistence:/root/cli-persistence:ro
+      - /root/.local/bin/gws-email:/root/.local/bin/gws-email:ro
+    ports:
+      - "4321"
