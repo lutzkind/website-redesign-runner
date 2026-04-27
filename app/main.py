@@ -16,15 +16,12 @@ from urllib.request import Request, urlopen
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+BUNDLED_SKILLS_DIR = BASE_DIR / "skills"
 HOST = os.environ.get("WEBSITE_REDESIGN_HOST", "0.0.0.0")
 PORT = int(os.environ.get("WEBSITE_REDESIGN_PORT", "4321"))
-PUBLIC_BASE_URL = os.environ.get(
-    "WEBSITE_REDESIGN_PUBLIC_BASE_URL",
-    "http://127.0.0.1:4321",
-).rstrip("/")
 MODEL = os.environ.get("WEBSITE_REDESIGN_MODEL", "opencode/big-pickle")
 ROOT = Path(os.environ.get("WEBSITE_REDESIGN_ROOT", "/data"))
-SKILLS_DIR = Path(os.environ.get("WEBSITE_REDESIGN_SKILLS_DIR", str(BASE_DIR / "skills")))
+SKILLS_DIR = Path(os.environ.get("WEBSITE_REDESIGN_SKILLS_DIR", str(ROOT / "skills")))
 DEFAULT_INDUSTRY = os.environ.get("WEBSITE_REDESIGN_DEFAULT_INDUSTRY", "general")
 DEFAULT_SKILLS = [
     item.strip()
@@ -40,9 +37,38 @@ PREVIEWS_DIR = ROOT / "previews"
 STATE_LOCK = threading.Lock()
 
 
+def resolve_public_base_url() -> str:
+    for key in (
+        "WEBSITE_REDESIGN_PUBLIC_BASE_URL",
+        "SERVICE_URL_RUNNER_4321",
+        "SERVICE_URL_RUNNER",
+        "COOLIFY_URL",
+    ):
+        value = os.environ.get(key, "").strip().rstrip("/")
+        if value:
+            return value
+    return f"http://127.0.0.1:{PORT}"
+
+
+PUBLIC_BASE_URL = resolve_public_base_url()
+
+
 def ensure_dirs() -> None:
     JOBS_DIR.mkdir(parents=True, exist_ok=True)
     PREVIEWS_DIR.mkdir(parents=True, exist_ok=True)
+    bootstrap_skills_dir()
+
+
+def bootstrap_skills_dir() -> None:
+    SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+    bundled_files = [path for path in BUNDLED_SKILLS_DIR.rglob("*.md") if path.is_file()]
+    if any(SKILLS_DIR.rglob("*.md")):
+        return
+    for source in bundled_files:
+        relative = source.relative_to(BUNDLED_SKILLS_DIR)
+        destination = SKILLS_DIR / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
 
 
 def now_iso() -> str:
@@ -168,6 +194,7 @@ def list_available_skills() -> dict:
     return {
         "default_skills": list(DEFAULT_SKILLS),
         "default_industry": DEFAULT_INDUSTRY,
+        "skills_dir": str(SKILLS_DIR),
         "base_skills": base_skills,
         "industry_skills": industry_skills,
     }
@@ -552,6 +579,27 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/skills":
             self._send_json(list_available_skills())
+            return
+
+        if parsed.path.startswith("/skills/"):
+            relative = unquote(parsed.path[len("/skills/"):]).lstrip("/")
+            safe = Path(relative)
+            if ".." in safe.parts:
+                self._send_json({"error": "invalid path"}, status=400)
+                return
+            if safe.suffix != ".md":
+                safe = safe.with_suffix(".md")
+            skill_path = SKILLS_DIR / safe
+            if not skill_path.exists() or not skill_path.is_file():
+                self._send_json({"error": "skill not found"}, status=404)
+                return
+            self._send_json(
+                {
+                    "name": skill_path.stem,
+                    "path": str(skill_path),
+                    "content": skill_path.read_text(encoding="utf-8"),
+                }
+            )
             return
 
         if parsed.path.startswith("/jobs/"):

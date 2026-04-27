@@ -15,6 +15,7 @@ Git-backed runner for AI website redesign jobs.
 
 - `GET /health`
 - `GET /skills`
+- `GET /skills/<name>`
 - `POST /jobs`
 - `GET /jobs/<job_id>`
 - `GET /jobs/<job_id>/prompt`
@@ -44,13 +45,19 @@ Git-backed runner for AI website redesign jobs.
 
 ## Skill system
 
-Prompt behavior is controlled by markdown files under `skills/`.
+Prompt behavior is controlled by markdown files.
 
+- bundled defaults live in `skills/` inside the repo
+- on first boot the runner copies them into `/data/skills`
 - top-level skills define cross-industry behavior
-- `skills/industry/*.md` adds domain-specific rules
+- `/data/skills/industry/*.md` adds domain-specific rules
 - job payloads can override `industry`, `enabled_skills`, and `extra_instructions`
 
-This makes the design system tunable in Git instead of being buried in Python code.
+This makes the design system tunable without changing Python code:
+
+- edit the persistent files under `runner-data/skills/` on the Coolify host
+- inspect the active versions through `GET /skills` and `GET /skills/<name>`
+- keep the repo defaults as the versioned baseline
 
 ## Local run
 
