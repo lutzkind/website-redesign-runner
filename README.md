@@ -26,7 +26,16 @@ Git-backed runner for AI website redesign jobs.
 ```json
 {
   "website_url": "https://example.com",
-  "design_references": ["https://stripe.com", "https://linear.app"],
+  "design_references": [
+    {
+      "url": "https://stripe.com",
+      "focus": "Use the typography scale, dark/light contrast, and premium section spacing."
+    },
+    {
+      "url": "https://linear.app",
+      "focus": "Borrow the product storytelling rhythm and restrained motion direction."
+    }
+  ],
   "client_slug": "example-client",
   "industry": "restaurant",
   "brand_notes": "Premium editorial redesign with stronger reservation CTA.",
@@ -58,6 +67,19 @@ This makes the design system tunable without changing Python code:
 - edit the persistent files under `runner-data/skills/` on the Coolify host
 - inspect the active versions through `GET /skills` and `GET /skills/<name>`
 - keep the repo defaults as the versioned baseline
+
+## Analysis pipeline
+
+- the runner uses Firecrawl to scrape the source site into markdown + HTML
+- it also scrapes the first few reference sites so the prompt includes their actual structure and tone, not just their URLs
+- each reference can include a `focus` field describing what the model should borrow from that site
+- if Firecrawl is unavailable for the source site, the runner falls back to a direct HTML fetch so jobs still run
+- for Docker/Coolify deploys, set `WEBSITE_REDESIGN_FIRECRAWL_URL` to the reachable Firecrawl endpoint from inside the container
+
+## Model policy
+
+- the runner refuses to start with any `openrouter/*` model path
+- configure `WEBSITE_REDESIGN_MODEL` to a non-OpenRouter OpenCode model only
 
 ## Local run
 

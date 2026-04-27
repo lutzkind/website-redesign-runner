@@ -8,6 +8,7 @@ import threading
 import time
 import traceback
 import uuid
+from urllib.error import HTTPError, URLError
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -23,6 +24,9 @@ MODEL = os.environ.get("WEBSITE_REDESIGN_MODEL", "opencode/big-pickle")
 ROOT = Path(os.environ.get("WEBSITE_REDESIGN_ROOT", "/data"))
 SKILLS_DIR = Path(os.environ.get("WEBSITE_REDESIGN_SKILLS_DIR", str(ROOT / "skills")))
 DEFAULT_INDUSTRY = os.environ.get("WEBSITE_REDESIGN_DEFAULT_INDUSTRY", "general")
+FIRECRAWL_URL = os.environ.get("WEBSITE_REDESIGN_FIRECRAWL_URL", "http://127.0.0.1:3092").rstrip("/")
+MAX_REFERENCE_SITES = int(os.environ.get("WEBSITE_REDESIGN_MAX_REFERENCE_SITES", "3"))
+FIRECRAWL_SCRAPE_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_FIRECRAWL_TIMEOUT", "90"))
 DEFAULT_SKILLS = [
     item.strip()
     for item in os.environ.get(
@@ -140,6 +144,40 @@ def run_command(
     )
 
 
+def validate_model_policy() -> None:
+    if MODEL.startswith("openrouter/"):
+        raise RuntimeError(
+            "OpenRouter models are disabled for this runner. "
+            "Configure a non-openrouter OpenCode model before starting the service."
+        )
+
+
+def truncate_text(value: str, limit: int = 1800) -> str:
+    value = (value or "").strip()
+    if len(value) <= limit:
+        return value
+    return value[: limit - 3].rstrip() + "..."
+
+
+def normalize_reference_item(item) -> dict:
+    if isinstance(item, str):
+        url = item.strip()
+        focus = ""
+    elif isinstance(item, dict):
+        url = str(item.get("url", "")).strip()
+        focus = str(item.get("focus", "")).strip()
+    else:
+        raise ValueError("design_references entries must be strings or objects")
+
+    parsed = urlparse(url)
+    if not url:
+        raise ValueError("design_references entries must include a url")
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"Invalid design reference URL: {url}")
+
+    return {"url": url, "focus": focus, "hostname": parsed.netloc}
+
+
 def normalize_request(payload: dict) -> dict:
     website_url = str(payload.get("website_url", "")).strip()
     if not website_url:
@@ -165,7 +203,7 @@ def normalize_request(payload: dict) -> dict:
     else:
         raise ValueError("enabled_skills must be an array or comma-delimited string")
 
-    normalized_refs = [str(item).strip() for item in refs if str(item).strip()]
+    normalized_refs = [normalize_reference_item(item) for item in refs if str(item).strip() or isinstance(item, dict)]
     client_slug = payload.get("client_slug") or parsed.netloc
     industry = slugify(str(payload.get("industry") or DEFAULT_INDUSTRY))
 
@@ -212,6 +250,51 @@ def resolve_skill_files(request: dict) -> list[Path]:
     return skill_files
 
 
+def firecrawl_post(path: str, payload: dict) -> dict:
+    request = Request(
+        f"{FIRECRAWL_URL}{path}",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=FIRECRAWL_SCRAPE_TIMEOUT) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Firecrawl {path} failed with HTTP {exc.code}: {body}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Firecrawl {path} request failed: {exc}") from exc
+
+
+def summarize_firecrawl_payload(scrape: dict, mapped_links: list[str] | None = None) -> dict:
+    data = scrape.get("data", {}) if isinstance(scrape, dict) else {}
+    metadata = data.get("metadata", {}) if isinstance(data, dict) else {}
+    markdown = data.get("markdown", "") if isinstance(data, dict) else ""
+    html = data.get("html", "") if isinstance(data, dict) else ""
+    return {
+        "title": metadata.get("title", ""),
+        "description": metadata.get("description", ""),
+        "language": metadata.get("language", ""),
+        "url": metadata.get("url") or metadata.get("sourceURL", ""),
+        "markdown_excerpt": truncate_text(markdown, 2400),
+        "html_excerpt": truncate_text(html, 1400),
+        "top_links": mapped_links or [],
+    }
+
+
+def analyze_with_firecrawl(url: str, include_map: bool = False) -> dict:
+    scrape = firecrawl_post("/v1/scrape", {"url": url, "formats": ["markdown", "html"]})
+    mapped_links: list[str] = []
+    if include_map:
+        mapping = firecrawl_post("/v1/map", {"url": url, "limit": 8})
+        mapped_links = mapping.get("links", [])[:8]
+    return {
+        "scrape": scrape,
+        "summary": summarize_firecrawl_payload(scrape, mapped_links),
+    }
+
+
 def render_skill_bundle(skill_files: list[Path]) -> str:
     if not skill_files:
         return "No additional skill files loaded."
@@ -253,14 +336,90 @@ def fetch_source_html(job_dir: Path, request: dict) -> dict:
         raise RuntimeError("Failed to fetch source HTML")
     return {
         "exit_code": result.returncode,
+        "method": "curl-fallback",
         "log": str(fetch_log),
         "source_root": str(source_root),
         "index_file": str(index_file),
     }
 
 
+def analyze_site_context(job_dir: Path, request: dict) -> dict:
+    source_root = job_dir / "source"
+    source_root.mkdir(parents=True, exist_ok=True)
+    analysis_dir = source_root / "analysis"
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+
+    result: dict = {
+        "source": None,
+        "references": [],
+    }
+
+    try:
+        source_analysis = analyze_with_firecrawl(request["website_url"], include_map=True)
+        (analysis_dir / "source.json").write_text(json.dumps(source_analysis, indent=2), encoding="utf-8")
+        html = source_analysis["scrape"].get("data", {}).get("html", "")
+        host_root = source_root / request["hostname"]
+        host_root.mkdir(parents=True, exist_ok=True)
+        (host_root / "index.html").write_text(html, encoding="utf-8")
+        result["source"] = {
+            "method": "firecrawl",
+            "analysis_file": str(analysis_dir / "source.json"),
+            "source_root": str(source_root),
+            "index_file": str(host_root / "index.html"),
+            "summary": source_analysis["summary"],
+        }
+    except Exception as exc:
+        fallback = fetch_source_html(job_dir, request)
+        fallback["warning"] = f"Firecrawl source analysis unavailable: {exc}"
+        result["source"] = fallback
+
+    for index, reference in enumerate(request["design_references"][:MAX_REFERENCE_SITES], start=1):
+        slug = slugify(reference["hostname"])
+        try:
+            ref_analysis = analyze_with_firecrawl(reference["url"], include_map=False)
+            payload = {
+                "reference": reference,
+                "analysis": ref_analysis,
+            }
+            output_file = analysis_dir / f"reference-{index:02d}-{slug}.json"
+            output_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            result["references"].append(
+                {
+                    "url": reference["url"],
+                    "focus": reference["focus"],
+                    "analysis_file": str(output_file),
+                    "summary": ref_analysis["summary"],
+                }
+            )
+        except Exception as exc:
+            result["references"].append(
+                {
+                    "url": reference["url"],
+                    "focus": reference["focus"],
+                    "error": str(exc),
+                }
+            )
+
+    return result
+
+
 def build_prompt(request: dict, job_dir: Path) -> tuple[str, list[str]]:
-    refs = "\n".join(f"- {item}" for item in request["design_references"]) or "- None supplied"
+    source_context = request.get("source_context") or {}
+    source_summary = source_context.get("source", {}).get("summary", {})
+    ref_contexts = source_context.get("references", [])
+
+    refs = "\n".join(
+        [
+            f"- URL: {item['url']}\n  Focus: {item.get('focus') or 'General visual direction'}"
+            + (
+                f"\n  Title: {item.get('summary', {}).get('title', '')}"
+                f"\n  Notes: {truncate_text(item.get('summary', {}).get('markdown_excerpt', ''), 700)}"
+                if item.get("summary")
+                else f"\n  Analysis status: {item.get('error', 'Not analyzed')}"
+            )
+            for item in ref_contexts
+        ]
+    ) or "- None supplied"
     notes = request["brand_notes"] or "No extra brand notes provided."
     extra = request["extra_instructions"] or "None."
     skill_files = resolve_skill_files(request)
@@ -272,6 +431,11 @@ def build_prompt(request: dict, job_dir: Path) -> tuple[str, list[str]]:
 Source website:
 - URL: {request["website_url"]}
 - Captured source HTML is available under ./source
+- Source title: {source_summary.get("title", "")}
+- Source summary:
+{truncate_text(source_summary.get("markdown_excerpt", "") or "No Firecrawl summary captured.", 1400)}
+- Important discovered links:
+{chr(10).join(f"  - {link}" for link in source_summary.get("top_links", [])[:8]) or "  - None"}
 
 Design references:
 {refs}
@@ -292,6 +456,7 @@ Requirements:
 1. Build a redesigned static website preview in ./dist.
 2. Preserve the core content, sections, and intent from the source site where practical.
 3. Use the design references for layout, typography, spacing, and visual direction, but do not copy branding directly.
+3a. Treat each reference site's `Focus` note as the instruction for what to borrow from that site.
 4. Ensure ./dist/index.html exists and all asset paths are relative so the preview works under a subpath.
 5. Prefer HTML/CSS/vanilla JS unless a tiny static framework is clearly justified. Do not require a build step for previewing.
 6. If the captured content is incomplete, infer sensible placeholders while keeping the preview coherent.
@@ -377,7 +542,7 @@ def create_dry_run_preview(job_dir: Path, request: dict, applied_skills: list[st
           <li>Source URL: {request["website_url"]}</li>
           <li>Industry: {request["industry"]}</li>
           <li>Skills: {", ".join(applied_skills) or "None"}</li>
-          <li>References: {", ".join(request["design_references"]) or "None"}</li>
+          <li>References: {", ".join(item["url"] for item in request["design_references"]) or "None"}</li>
         </ul>
       </section>
     </main>
@@ -497,8 +662,9 @@ def process_job(job_id: str, request: dict) -> None:
     job_dir = job_dir_path(job_id)
     try:
         update_state(job_id, status="running", step="capturing-source", model=MODEL)
-        fetch_result = fetch_source_html(job_dir, request)
-        update_state(job_id, source_capture=fetch_result)
+        source_context = analyze_site_context(job_dir, request)
+        request["source_context"] = source_context
+        update_state(job_id, source_capture=source_context)
 
         if request["dry_run"]:
             _, applied_skills = build_prompt(request, job_dir)
@@ -572,6 +738,8 @@ class Handler(BaseHTTPRequestHandler):
                     "healthy": True,
                     "model": MODEL,
                     "public_base_url": PUBLIC_BASE_URL,
+                    "firecrawl_url": FIRECRAWL_URL,
+                    "model_policy": "deny-openrouter",
                     "skills": list_available_skills(),
                 }
             )
@@ -694,6 +862,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    validate_model_policy()
     ensure_dirs()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"website redesign runner listening on http://{HOST}:{PORT}", flush=True)

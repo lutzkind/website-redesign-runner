@@ -10,8 +10,11 @@ services:
       WEBSITE_REDESIGN_MODEL: ${WEBSITE_REDESIGN_MODEL:-opencode/big-pickle}
       WEBSITE_REDESIGN_ROOT: /data
       WEBSITE_REDESIGN_SKILLS_DIR: /data/skills
+      WEBSITE_REDESIGN_FIRECRAWL_URL: ${WEBSITE_REDESIGN_FIRECRAWL_URL:-http://host.docker.internal:3092}
       WEBSITE_REDESIGN_DEFAULT_INDUSTRY: ${WEBSITE_REDESIGN_DEFAULT_INDUSTRY:-general}
       WEBSITE_REDESIGN_DEFAULT_SKILLS: ${WEBSITE_REDESIGN_DEFAULT_SKILLS:-website-audit,design-direction,layout-composer,frontend-art-direction,design-critic}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./runner-data:/data
       - /root/.config/opencode:/root/.config/opencode:ro
