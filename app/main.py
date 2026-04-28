@@ -33,6 +33,7 @@ IMPECCABLE_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_TIMEOUT", "
 DEFAULT_IMPECCABLE_CRITIQUE = os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_CRITIQUE", "true")
 DEFAULT_IMPECCABLE_AUTOFIX = os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_AUTOFIX", "true")
 IMPECCABLE_MAX_FINDINGS = int(os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_MAX_FINDINGS", "8"))
+IMPECCABLE_MAX_REFINEMENT_PASSES = int(os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_MAX_REFINEMENT_PASSES", "2"))
 ALLOWED_GENERATOR_PROFILES = {"lean", "balanced", "quality"}
 ALLOWED_IMAGE_STRATEGIES = {"source-only", "source-first", "hybrid", "stock-first"}
 ALLOWED_SOURCE_EXPANSION_MODES = {"strict", "balanced", "aggressive"}
@@ -1433,6 +1434,11 @@ Requirements:
 - Prioritize accessibility, typography quality, visual hierarchy, spacing rhythm, and anti-generic design issues.
 - Keep the existing reference-led mood intact.
 - Make the smallest set of edits that materially improves the result.
+- Fully resolve every listed finding, not just some of them.
+- Do not replace one low-contrast issue with another. If the background is bright or multicolored, use dark text or add a dark surface behind the text.
+- Remove decorative gradient text entirely; use solid text colors with clear contrast.
+- Prefer distinctive but readable font stacks over generic defaults like Arial.
+- When fixing contrast, aim to clearly exceed WCAG AA rather than barely meeting it.
 - Append a short 'Impeccable refinement' note to ./dist/redesign-summary.md describing what changed.
 """
     prompt_file = job_dir / "impeccable-refinement-prompt.txt"
@@ -1461,6 +1467,36 @@ Requirements:
         "prompt": str(prompt_file),
         "findings_used": len(findings),
     }
+
+
+def run_impeccable_pipeline(job_id: str, job_dir: Path, request: dict) -> dict:
+    critique_result = run_impeccable_detect(job_dir)
+    passes: list[dict] = []
+    if critique_result.get("status") != "findings" or not request.get("impeccable_autofix", True):
+        critique_result["passes"] = passes
+        return critique_result
+
+    for pass_index in range(1, IMPECCABLE_MAX_REFINEMENT_PASSES + 1):
+        update_state(job_id, step="running-impeccable-refinement", impeccable=critique_result)
+        refinement = run_impeccable_refinement(job_dir, request, critique_result)
+        next_detect = None
+        if refinement.get("exit_code") == 0:
+            next_detect = run_impeccable_detect(job_dir)
+        pass_report = {
+            "pass": pass_index,
+            "refinement": refinement,
+            "post_refinement": next_detect,
+        }
+        passes.append(pass_report)
+        critique_result["passes"] = passes
+        critique_result["refinement"] = refinement
+        critique_result["post_refinement"] = next_detect
+        if not next_detect or next_detect.get("status") != "findings":
+            break
+        critique_result = next_detect
+
+    critique_result["passes"] = passes
+    return critique_result
 
 
 def publish_preview(job_dir: Path, slug: str) -> str:
@@ -1562,13 +1598,7 @@ def process_job(job_id: str, request: dict) -> None:
         if not request["dry_run"] and request.get("impeccable_critique", True):
             update_state(job_id, step="running-impeccable")
             try:
-                critique_result = run_impeccable_detect(job_dir)
-                if critique_result.get("status") == "findings" and request.get("impeccable_autofix", True):
-                    update_state(job_id, step="running-impeccable-refinement", impeccable=critique_result)
-                    refinement = run_impeccable_refinement(job_dir, request, critique_result)
-                    critique_result["refinement"] = refinement
-                    if refinement.get("exit_code") == 0:
-                        critique_result["post_refinement"] = run_impeccable_detect(job_dir)
+                critique_result = run_impeccable_pipeline(job_id, job_dir, request)
                 update_state(job_id, impeccable=critique_result)
             except Exception as exc:
                 critique_result = {"status": "error", "error": str(exc)}
