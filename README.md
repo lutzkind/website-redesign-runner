@@ -69,6 +69,9 @@ The runner now exposes the main operator levers directly in the job payload:
 - `image_strategy`: `source-only`, `source-first`, `hybrid`, or `stock-first`
 - `reuse_source_images`: whether to keep using source imagery when it is good enough
 - `allow_external_images`: whether the model may upgrade weak photography with external/editorial imagery
+- `source_expansion_mode`: `strict`, `balanced`, or `aggressive`
+- `search_enrichment`: enable or disable external search fallback
+- `search_budget`: max number of external enrichment results to merge
 - `design_goal`: short statement of the intended creative outcome
 - `prompt_append`: last-mile operator note appended into the prompt controls
 
@@ -101,6 +104,8 @@ This makes the design system tunable without changing Python code:
 - it also scrapes the first few reference sites so the prompt includes their actual structure and tone, not just their URLs
 - each reference can include a `focus` field describing what the model should borrow from that site
 - the runner extracts source and reference asset candidates so the model can reuse logos/photos when helpful instead of returning imageless redesigns
+- the runner scores source completeness and, when needed, uses Firecrawl search to enrich weak websites with external business context
+- the runner writes `/jobs/<job_id>/source/analysis/business-profile.json` so prompts can use compact structured facts instead of raw scrape dumps
 - if Firecrawl is unavailable for the source site, the runner falls back to a direct HTML fetch so jobs still run
 - for Docker/Coolify deploys, set `WEBSITE_REDESIGN_FIRECRAWL_URL` to the reachable Firecrawl endpoint from inside the container
 

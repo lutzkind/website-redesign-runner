@@ -29,6 +29,7 @@ MAX_REFERENCE_SITES = int(os.environ.get("WEBSITE_REDESIGN_MAX_REFERENCE_SITES",
 FIRECRAWL_SCRAPE_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_FIRECRAWL_TIMEOUT", "90"))
 ALLOWED_GENERATOR_PROFILES = {"lean", "balanced", "quality"}
 ALLOWED_IMAGE_STRATEGIES = {"source-only", "source-first", "hybrid", "stock-first"}
+ALLOWED_SOURCE_EXPANSION_MODES = {"strict", "balanced", "aggressive"}
 DEFAULT_SKILLS = [
     item.strip()
     for item in os.environ.get(
@@ -262,11 +263,21 @@ def normalize_request(payload: dict) -> dict:
     image_strategy = str(payload.get("image_strategy") or "hybrid").strip().lower()
     if image_strategy not in ALLOWED_IMAGE_STRATEGIES:
         raise ValueError(f"image_strategy must be one of: {', '.join(sorted(ALLOWED_IMAGE_STRATEGIES))}")
+    source_expansion_mode = str(payload.get("source_expansion_mode") or "balanced").strip().lower()
+    if source_expansion_mode not in ALLOWED_SOURCE_EXPANSION_MODES:
+        raise ValueError(
+            f"source_expansion_mode must be one of: {', '.join(sorted(ALLOWED_SOURCE_EXPANSION_MODES))}"
+        )
     reference_limit = payload.get("reference_limit", MAX_REFERENCE_SITES)
     try:
         reference_limit = max(0, min(int(reference_limit), MAX_REFERENCE_SITES))
     except Exception:
         raise ValueError("reference_limit must be an integer")
+    search_budget = payload.get("search_budget", 4)
+    try:
+        search_budget = max(0, min(int(search_budget), 8))
+    except Exception:
+        raise ValueError("search_budget must be an integer")
 
     return {
         "website_url": website_url,
@@ -287,6 +298,9 @@ def normalize_request(payload: dict) -> dict:
         "reference_limit": reference_limit,
         "design_goal": str(payload.get("design_goal", "")).strip(),
         "prompt_append": str(payload.get("prompt_append", "")).strip(),
+        "source_expansion_mode": source_expansion_mode,
+        "search_enrichment": parse_bool(payload.get("search_enrichment"), True),
+        "search_budget": search_budget,
     }
 
 
@@ -335,6 +349,13 @@ def firecrawl_post(path: str, payload: dict) -> dict:
         raise RuntimeError(f"Firecrawl {path} request failed: {exc}") from exc
 
 
+def firecrawl_search(query: str, limit: int = 5, scrape_markdown: bool = False) -> dict:
+    payload: dict = {"query": query, "limit": limit}
+    if scrape_markdown:
+        payload["scrapeOptions"] = {"formats": ["markdown"]}
+    return firecrawl_post("/v1/search", payload)
+
+
 def summarize_firecrawl_payload(scrape: dict, mapped_links: list[str] | None = None) -> dict:
     data = scrape.get("data", {}) if isinstance(scrape, dict) else {}
     metadata = data.get("metadata", {}) if isinstance(data, dict) else {}
@@ -351,6 +372,16 @@ def summarize_firecrawl_payload(scrape: dict, mapped_links: list[str] | None = N
     }
 
 
+def summarize_search_item(item: dict) -> dict:
+    markdown = item.get("markdown", "") if isinstance(item, dict) else ""
+    return {
+        "title": item.get("title", ""),
+        "description": item.get("description", ""),
+        "url": item.get("url", ""),
+        "markdown_excerpt": truncate_text(markdown, 900),
+    }
+
+
 def analyze_with_firecrawl(url: str, include_map: bool = False) -> dict:
     scrape = firecrawl_post("/v1/scrape", {"url": url, "formats": ["markdown", "html"]})
     mapped_links: list[str] = []
@@ -360,6 +391,125 @@ def analyze_with_firecrawl(url: str, include_map: bool = False) -> dict:
     return {
         "scrape": scrape,
         "summary": summarize_firecrawl_payload(scrape, mapped_links),
+    }
+
+
+def score_source_completeness(source_summary: dict, asset_candidates: list[dict], top_links: list[str]) -> dict:
+    markdown = source_summary.get("markdown_excerpt", "") or ""
+    description = source_summary.get("description", "") or ""
+    score = 0.0
+    reasons: list[str] = []
+
+    if len(markdown) >= 500:
+        score += 0.28
+        reasons.append("source markdown has usable length")
+    if description:
+        score += 0.1
+        reasons.append("metadata description found")
+    if any(link for link in top_links if any(key in link.lower() for key in ("menu", "about", "contact", "gallery"))):
+        score += 0.22
+        reasons.append("important internal links discovered")
+    if any(asset.get("role") == "logo" for asset in asset_candidates):
+        score += 0.12
+        reasons.append("logo-like asset found")
+    if len(asset_candidates) >= 4:
+        score += 0.18
+        reasons.append("multiple visual assets found")
+    if re.search(r"\b(call|hours|address|family-owned|menu)\b", markdown, flags=re.IGNORECASE):
+        score += 0.1
+        reasons.append("business facts present in extracted content")
+
+    return {"score": min(score, 1.0), "reasons": reasons}
+
+
+def should_enrich_source(request: dict, completeness: dict) -> bool:
+    if not request.get("search_enrichment", True):
+        return False
+    mode = request["source_expansion_mode"]
+    if mode == "aggressive":
+        return True
+    threshold = 0.65 if mode == "balanced" else 0.4
+    return completeness.get("score", 0.0) < threshold
+
+
+def build_search_queries(request: dict, source_summary: dict) -> list[str]:
+    title = source_summary.get("title", "") or ""
+    description = source_summary.get("description", "") or ""
+    base = title.split("-")[0].strip() or request["hostname"]
+    queries = [base]
+    if description:
+        queries.append(f"{base} {description[:80]}")
+    queries.append(f"{base} reviews hours menu")
+    return queries
+
+
+def enrich_source_context(request: dict, source_summary: dict) -> dict:
+    budget = request["search_budget"]
+    queries = build_search_queries(request, source_summary)
+    seen: set[str] = set()
+    results: list[dict] = []
+    for query in queries:
+        if len(results) >= budget:
+            break
+        response = firecrawl_search(query, limit=budget, scrape_markdown=True)
+        for item in response.get("data", []):
+            url = item.get("url", "")
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            results.append(summarize_search_item(item))
+            if len(results) >= budget:
+                break
+    return {
+        "queries": queries,
+        "results": results,
+    }
+
+
+def extract_business_profile(request: dict, source_summary: dict, enrichment: dict, source_assets: list[dict]) -> dict:
+    markdown = source_summary.get("markdown_excerpt", "") or ""
+
+    def match(pattern: str) -> str:
+        found = re.search(pattern, markdown, flags=re.IGNORECASE)
+        return found.group(1).strip() if found else ""
+
+    phone = match(r"(?:\+?1[-.\s]?)?\(?(\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})")
+    hours = match(r"Opening Hours\s*:\s*([^\n]+)")
+    address = match(r"(\d{1,6} [^\n,]+,\s*[^\n]+)")
+    business_name = source_summary.get("title", "").split("-")[0].strip() or request["hostname"]
+
+    highlights = []
+    for phrase in (
+        "family-owned",
+        "over 30 years",
+        "breakfast",
+        "lunch",
+        "dinner",
+        "fresh ingredients",
+        "exceptional service",
+    ):
+        if phrase.lower() in markdown.lower():
+            highlights.append(phrase)
+
+    enrichment_notes = []
+    for item in enrichment.get("results", [])[: request["search_budget"]]:
+        bit = item.get("description") or item.get("markdown_excerpt") or ""
+        if bit:
+            enrichment_notes.append(truncate_text(bit, 220))
+
+    return {
+        "business_name": business_name,
+        "category": request["industry"],
+        "website_url": request["website_url"],
+        "address": address,
+        "phone": phone,
+        "hours": hours,
+        "core_highlights": highlights[:6],
+        "source_description": source_summary.get("description", ""),
+        "source_title": source_summary.get("title", ""),
+        "asset_count": len(source_assets),
+        "external_enrichment_notes": enrichment_notes[:4],
+        "sources": [source_summary.get("url", "")] + [item.get("url", "") for item in enrichment.get("results", [])[:4]],
     }
 
 
@@ -461,6 +611,8 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
     result: dict = {
         "source": None,
         "references": [],
+        "enrichment": {"results": []},
+        "business_profile": {},
     }
 
     try:
@@ -488,6 +640,32 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
         except Exception:
             fallback["asset_candidates"] = []
         result["source"] = fallback
+
+    source_summary = result["source"].get("summary", {}) if isinstance(result["source"], dict) else {}
+    source_assets = result["source"].get("asset_candidates", []) if isinstance(result["source"], dict) else []
+    top_links = source_summary.get("top_links", []) if isinstance(source_summary, dict) else []
+    completeness = score_source_completeness(source_summary, source_assets, top_links)
+    result["source"]["completeness"] = completeness
+
+    if should_enrich_source(request, completeness):
+        try:
+            enrichment = enrich_source_context(request, source_summary)
+            (analysis_dir / "search-enrichment.json").write_text(json.dumps(enrichment, indent=2), encoding="utf-8")
+            enrichment["analysis_file"] = str(analysis_dir / "search-enrichment.json")
+            result["enrichment"] = enrichment
+        except Exception as exc:
+            result["enrichment"] = {"results": [], "error": str(exc)}
+
+    result["business_profile"] = extract_business_profile(
+        request,
+        source_summary,
+        result["enrichment"],
+        source_assets,
+    )
+    (analysis_dir / "business-profile.json").write_text(
+        json.dumps(result["business_profile"], indent=2),
+        encoding="utf-8",
+    )
 
     for index, reference in enumerate(request["design_references"][: request["reference_limit"]], start=1):
         slug = slugify(reference["hostname"])
@@ -527,10 +705,10 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
 
 def profile_limits(profile: str) -> dict:
     if profile == "lean":
-        return {"source_chars": 700, "reference_chars": 280, "links": 4, "assets": 4}
+        return {"source_chars": 520, "reference_chars": 220, "links": 4, "assets": 4, "enrichment_chars": 180}
     if profile == "quality":
-        return {"source_chars": 1200, "reference_chars": 520, "links": 8, "assets": 8}
-    return {"source_chars": 900, "reference_chars": 380, "links": 6, "assets": 6}
+        return {"source_chars": 900, "reference_chars": 420, "links": 8, "assets": 8, "enrichment_chars": 240}
+    return {"source_chars": 700, "reference_chars": 320, "links": 6, "assets": 6, "enrichment_chars": 200}
 
 
 def render_asset_guidance(request: dict, source_assets: list[dict]) -> str:
@@ -572,6 +750,8 @@ def build_prompt_parts(request: dict, job_dir: Path) -> tuple[dict, list[str]]:
     source = source_context.get("source", {})
     source_summary = source.get("summary", {})
     ref_contexts = source_context.get("references", [])
+    enrichment = source_context.get("enrichment", {})
+    business_profile = source_context.get("business_profile", {})
     limits = profile_limits(request["generator_profile"])
     source_assets = source.get("asset_candidates", []) or []
 
@@ -622,16 +802,33 @@ Skill directives:
     operator_controls = f"""Operator controls:
 - Industry: {request['industry']}
 - Generator profile: {request['generator_profile']}
+- Source expansion mode: {request['source_expansion_mode']}
+- Search enrichment: {request['search_enrichment']}
+- Search budget: {request['search_budget']}
 - Design goal: {request['design_goal'] or 'General premium redesign'}
 - Brand notes: {request['brand_notes'] or 'None'}
 - Additional instructions: {request['extra_instructions'] or 'None'}
 - Prompt append: {request['prompt_append'] or 'None'}
 """
 
-    source_context_block = f"""Source website:
+    business_profile_block = f"""Business profile:
+- Business name: {business_profile.get('business_name', '')}
+- Category: {business_profile.get('category', '')}
+- Address: {business_profile.get('address', 'Unknown')}
+- Phone: {business_profile.get('phone', 'Unknown')}
+- Hours: {business_profile.get('hours', 'Unknown')}
+- Source description: {business_profile.get('source_description', '')}
+- Core highlights:
+{chr(10).join(f"  - {item}" for item in business_profile.get('core_highlights', [])) or '  - None extracted'}
+"""
+
+    source_context_block = f"""Source website context:
 - URL: {request['website_url']}
 - Captured source HTML is available under ./source
 - Source title: {source_summary.get('title', '')}
+- Completeness score: {source.get('completeness', {}).get('score', 0.0):.2f}
+- Completeness notes:
+{chr(10).join(f"  - {item}" for item in source.get('completeness', {}).get('reasons', [])) or '  - None'}
 - Source summary:
 {truncate_text(source_summary.get('markdown_excerpt', '') or 'No Firecrawl summary captured.', limits['source_chars'])}
 - Important discovered links:
@@ -639,6 +836,22 @@ Skill directives:
 """
 
     reference_block = "Design references:\n" + ("\n".join(ref_lines) if ref_lines else "- None supplied")
+    enrichment_lines = []
+    for item in enrichment.get("results", [])[: request["search_budget"]]:
+        enrichment_lines.append(
+            "\n".join(
+                [
+                    f"- {item.get('title', '')}",
+                    f"  URL: {item.get('url', '')}",
+                    f"  Notes: {truncate_text(item.get('description') or item.get('markdown_excerpt', ''), limits['enrichment_chars'])}",
+                ]
+            )
+        )
+    enrichment_block = "External enrichment:\n" + (
+        "\n".join(enrichment_lines)
+        if enrichment_lines
+        else f"- None used ({enrichment.get('error', 'source content considered sufficient')})"
+    )
     asset_block = "Image and asset strategy:\n" + render_asset_guidance(request, source_assets)
 
     implementation_block = """Implementation expectations:
@@ -653,8 +866,10 @@ Skill directives:
     parts = {
         "stable_prefix": stable_prefix,
         "operator_controls": operator_controls,
+        "business_profile": business_profile_block,
         "source_context": source_context_block,
         "reference_context": reference_block,
+        "external_enrichment": enrichment_block,
         "asset_strategy": asset_block,
         "implementation_expectations": implementation_block,
     }
