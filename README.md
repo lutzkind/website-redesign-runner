@@ -103,6 +103,7 @@ This makes the design system tunable without changing Python code:
 - the runner uses Firecrawl to scrape the source site into markdown + HTML
 - it also scrapes the first few reference sites so the prompt includes their actual structure and tone, not just their URLs
 - each reference can include a `focus` field describing what the model should borrow from that site
+- each reference now also gets a derived visual brief from its HTML/CSS: likely fonts, palette cues, image density, spacing/mood signals, and structure hints
 - the runner extracts source and reference asset candidates so the model can reuse logos/photos when helpful instead of returning imageless redesigns
 - the runner scores source completeness and, when needed, uses Firecrawl search to enrich weak websites with external business context
 - the runner writes `/jobs/<job_id>/source/analysis/business-profile.json` so prompts can use compact structured facts instead of raw scrape dumps

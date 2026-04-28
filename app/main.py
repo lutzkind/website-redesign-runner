@@ -565,6 +565,98 @@ def extract_asset_candidates(html: str, base_url: str) -> list[dict]:
     return candidates
 
 
+def fetch_text_url(url: str, timeout: int = 45) -> str:
+    request = Request(
+        url,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; WebsiteRedesignBot/1.0)"},
+        method="GET",
+    )
+    with urlopen(request, timeout=timeout) as response:
+        return response.read().decode("utf-8", errors="replace")
+
+
+def extract_stylesheet_urls(html: str, base_url: str) -> list[str]:
+    urls: list[str] = []
+    seen: set[str] = set()
+    for match in re.finditer(r"<link[^>]+rel=[\"'][^\"']*stylesheet[^\"']*[\"'][^>]+href=[\"']([^\"']+)[\"']", html, flags=re.IGNORECASE):
+        href = match.group(1).strip()
+        if not href:
+            continue
+        full = urljoin(base_url, href)
+        if full in seen:
+            continue
+        seen.add(full)
+        urls.append(full)
+        if len(urls) >= 6:
+            break
+    return urls
+
+
+def extract_visual_brief(html: str, base_url: str) -> dict:
+    stylesheet_urls = extract_stylesheet_urls(html, base_url)
+    css_chunks: list[str] = []
+    for stylesheet_url in stylesheet_urls[:4]:
+        try:
+            css_chunks.append(fetch_text_url(stylesheet_url, timeout=25))
+        except Exception:
+            continue
+    css_text = "\n".join(css_chunks)
+
+    font_matches = re.findall(r"font-family\s*:\s*([^;}{]+)", css_text, flags=re.IGNORECASE)
+    font_counts: dict[str, int] = {}
+    for match in font_matches:
+        for raw in match.split(","):
+            family = raw.strip().strip("'\"")
+            if not family or family.lower() in {"serif", "sans-serif", "system-ui", "inherit"}:
+                continue
+            font_counts[family] = font_counts.get(family, 0) + 1
+    fonts = [name for name, _ in sorted(font_counts.items(), key=lambda item: (-item[1], item[0]))[:5]]
+
+    colors = re.findall(r"#[0-9a-fA-F]{3,8}\b", css_text)
+    color_counts: dict[str, int] = {}
+    for color in colors:
+        normalized = color.lower()
+        color_counts[normalized] = color_counts.get(normalized, 0) + 1
+    palette = [name for name, _ in sorted(color_counts.items(), key=lambda item: (-item[1], item[0]))[:6]]
+
+    heading_count = len(re.findall(r"<h[1-4]\b", html, flags=re.IGNORECASE))
+    image_count = len(re.findall(r"<img\b", html, flags=re.IGNORECASE))
+    section_count = len(re.findall(r"<section\b", html, flags=re.IGNORECASE))
+    nav_present = bool(re.search(r"<nav\b", html, flags=re.IGNORECASE))
+    buttonish = len(re.findall(r"(?:button|btn|cta)", html, flags=re.IGNORECASE))
+
+    radius_values = [int(v) for v in re.findall(r"border-radius\s*:\s*(\d+)px", css_text, flags=re.IGNORECASE)]
+    generous_spacing = len(re.findall(r"padding(?:-[a-z]+)?\s*:\s*(?:[3-9]\d|\d{3,})px", css_text, flags=re.IGNORECASE))
+    dark_bias = bool(re.search(r"background(?:-color)?\s*:\s*#(?:0[0-9a-f]{2}|1[0-9a-f]{2}|2[0-9a-f]{2}|3[0-9a-f]{2})", css_text, flags=re.IGNORECASE))
+    uppercase_bias = bool(re.search(r"text-transform\s*:\s*uppercase", css_text, flags=re.IGNORECASE))
+
+    mood = []
+    if dark_bias:
+        mood.append("dark or moody contrast")
+    if generous_spacing > 10:
+        mood.append("generous spacing")
+    if image_count >= max(4, heading_count):
+        mood.append("image-led composition")
+    if radius_values and max(radius_values) >= 20:
+        mood.append("soft rounded surfaces")
+    if uppercase_bias:
+        mood.append("editorial uppercase accents")
+    if nav_present:
+        mood.append("clear hospitality-style navigation")
+
+    return {
+        "fonts": fonts,
+        "palette": palette,
+        "heading_count": heading_count,
+        "image_count": image_count,
+        "section_count": section_count,
+        "nav_present": nav_present,
+        "cta_density": buttonish,
+        "mood_signals": mood,
+        "stylesheet_urls": stylesheet_urls,
+    }
+
+
 def fetch_source_html(job_dir: Path, request: dict) -> dict:
     source_root = job_dir / "source"
     source_root.mkdir(parents=True, exist_ok=True)
@@ -671,14 +763,14 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
         slug = slugify(reference["hostname"])
         try:
             ref_analysis = analyze_with_firecrawl(reference["url"], include_map=False)
-            ref_assets = extract_asset_candidates(
-                ref_analysis["scrape"].get("data", {}).get("html", ""),
-                reference["url"],
-            )
+            ref_html = ref_analysis["scrape"].get("data", {}).get("html", "")
+            ref_assets = extract_asset_candidates(ref_html, reference["url"])
+            visual_brief = extract_visual_brief(ref_html, reference["url"])
             payload = {
                 "reference": reference,
                 "analysis": ref_analysis,
                 "asset_candidates": ref_assets,
+                "visual_brief": visual_brief,
             }
             output_file = analysis_dir / f"reference-{index:02d}-{slug}.json"
             output_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -689,6 +781,7 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
                     "analysis_file": str(output_file),
                     "summary": ref_analysis["summary"],
                     "asset_candidates": ref_assets,
+                    "visual_brief": visual_brief,
                 }
             )
         except Exception as exc:
@@ -757,6 +850,18 @@ def build_prompt_parts(request: dict, job_dir: Path) -> tuple[dict, list[str]]:
 
     ref_lines = []
     for item in ref_contexts:
+        visual = item.get("visual_brief", {}) or {}
+        visual_lines = []
+        if visual.get("fonts"):
+            visual_lines.append(f"  Fonts: {', '.join(visual['fonts'][:4])}")
+        if visual.get("palette"):
+            visual_lines.append(f"  Palette cues: {', '.join(visual['palette'][:5])}")
+        if visual.get("mood_signals"):
+            visual_lines.append(f"  Mood signals: {', '.join(visual['mood_signals'][:5])}")
+        if visual:
+            visual_lines.append(
+                f"  Structure cues: sections={visual.get('section_count', 0)}, images={visual.get('image_count', 0)}, headings={visual.get('heading_count', 0)}, nav={visual.get('nav_present', False)}"
+            )
         if item.get("summary"):
             summary = item["summary"]
             ref_lines.append(
@@ -765,7 +870,8 @@ def build_prompt_parts(request: dict, job_dir: Path) -> tuple[dict, list[str]]:
                         f"- URL: {item['url']}",
                         f"  Focus: {item.get('focus') or 'General visual direction'}",
                         f"  Title: {summary.get('title', '')}",
-                        f"  Notes: {truncate_text(summary.get('markdown_excerpt', ''), limits['reference_chars'])}",
+                        *visual_lines,
+                        f"  Content notes: {truncate_text(summary.get('markdown_excerpt', ''), limits['reference_chars'])}",
                     ]
                 )
             )
@@ -775,6 +881,7 @@ def build_prompt_parts(request: dict, job_dir: Path) -> tuple[dict, list[str]]:
                     [
                         f"- URL: {item['url']}",
                         f"  Focus: {item.get('focus') or 'General visual direction'}",
+                        *visual_lines,
                         f"  Analysis status: {item.get('error', 'Not analyzed')}",
                     ]
                 )
@@ -857,6 +964,7 @@ Skill directives:
     implementation_block = """Implementation expectations:
 - Use the design references for layout, typography, spacing, rhythm, and visual tone, but do not copy branding directly.
 - Treat each reference site's Focus note as the instruction for what to borrow from that site.
+- Match the dominant reference site's visual system deliberately: typography feel, spacing scale, image density, and section cadence should be recognizably inspired by it.
 - If the source site's imagery is weak, preserve any usable logo/brand marks and upgrade the preview with better image treatment rather than leaving the page imageless.
 - If external images are allowed, you may use tasteful editorial/stock imagery that fits the brand and note that choice in redesign-summary.md.
 - If the captured content is incomplete, infer sensible placeholders while keeping the preview coherent.
