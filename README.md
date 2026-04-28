@@ -79,6 +79,7 @@ This makes the design system tunable without changing Python code:
 ## Model policy
 
 - the runner refuses to start with any `openrouter/*` model path
+- default deployment model is `deepseek/deepseek-v4-flash`
 - configure `WEBSITE_REDESIGN_MODEL` to a non-OpenRouter OpenCode model only
 
 ## Local run
