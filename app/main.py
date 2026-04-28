@@ -781,6 +781,130 @@ def extract_stylesheet_urls(html: str, base_url: str) -> list[str]:
     return urls
 
 
+def parse_numeric_px_values(css_text: str, property_name: str) -> list[int]:
+    pattern = rf"{re.escape(property_name)}\s*:\s*([^;}}{{]+)"
+    values: list[int] = []
+    for match in re.finditer(pattern, css_text, flags=re.IGNORECASE):
+        chunk = match.group(1)
+        for token in re.findall(r"(\d+(?:\.\d+)?)px", chunk):
+            try:
+                values.append(int(round(float(token))))
+            except Exception:
+                continue
+    return values
+
+
+def summarize_numeric_scale(values: list[int]) -> str:
+    usable = sorted(v for v in values if v > 0)
+    if not usable:
+        return ""
+    uniques = sorted(set(usable))
+    if len(uniques) == 1:
+        return f"{uniques[0]}px"
+    top = uniques[:6]
+    return ", ".join(f"{item}px" for item in top)
+
+
+def summarize_font_role(fonts: list[str], fallback: str) -> str:
+    if fonts:
+        return fonts[0]
+    return fallback
+
+
+def detect_component_patterns(html: str, css_text: str) -> dict:
+    class_tokens = " ".join(re.findall(r'class=[\"\']([^\"\']+)[\"\']', html, flags=re.IGNORECASE))
+    button_rounding = parse_numeric_px_values(css_text, "border-radius")
+    rounded = max(button_rounding) if button_rounding else 0
+    button_style = "minimal"
+    if re.search(r"(?:btn|button)[^{]*\{[^}]*border-radius\s*:\s*(\d+)px", css_text, flags=re.IGNORECASE | re.DOTALL):
+        if rounded >= 32:
+            button_style = "pill"
+        elif rounded >= 12:
+            button_style = "soft rounded"
+        else:
+            button_style = "crisp rectangular"
+    hero_style = "editorial"
+    if re.search(r"(hero|banner)", class_tokens, flags=re.IGNORECASE):
+        hero_style = "explicit hero section"
+    if re.search(r"(split|two-column|grid-template-columns\s*:\s*[^;]*1fr[^;]*1fr)", css_text, flags=re.IGNORECASE):
+        hero_style = "split-layout hero"
+    header_style = "minimal"
+    if re.search(r"(sticky|position\s*:\s*fixed|position\s*:\s*sticky)", css_text, flags=re.IGNORECASE):
+        header_style = "sticky/fixed header"
+    elif re.search(r"<nav\b", html, flags=re.IGNORECASE):
+        header_style = "standard navigation header"
+    card_style = "light panels"
+    if re.search(r"box-shadow\s*:\s*[^;]+", css_text, flags=re.IGNORECASE):
+        card_style = "elevated cards/panels"
+    elif rounded >= 20:
+        card_style = "soft rounded surfaces"
+    return {
+        "header": header_style,
+        "hero": hero_style,
+        "buttons": button_style,
+        "cards": card_style,
+    }
+
+
+def extract_reference_blueprint(html: str, base_url: str, visual_brief: dict, screenshot_brief: dict) -> dict:
+    stylesheet_urls = visual_brief.get("stylesheet_urls", []) or []
+    css_chunks: list[str] = []
+    for stylesheet_url in stylesheet_urls[:4]:
+        try:
+            css_chunks.append(fetch_text_url(stylesheet_url, timeout=25))
+        except Exception:
+            continue
+    css_text = "\n".join(css_chunks)
+
+    fonts = visual_brief.get("fonts", []) or []
+    palette = (screenshot_brief.get("visual_summary", {}).get("desktop", {}) or {}).get("palette", []) or visual_brief.get("palette", []) or []
+    section_padding_values = parse_numeric_px_values(css_text, "padding")
+    gap_values = parse_numeric_px_values(css_text, "gap")
+    radius_values = parse_numeric_px_values(css_text, "border-radius")
+    max_width_values = parse_numeric_px_values(css_text, "max-width")
+    letter_spacing_values = re.findall(r"letter-spacing\s*:\s*([0-9.]+)em", css_text, flags=re.IGNORECASE)
+    uppercase_bias = bool(re.search(r"text-transform\s*:\s*uppercase", css_text, flags=re.IGNORECASE))
+
+    desktop_visual = screenshot_brief.get("visual_summary", {}).get("desktop", {}) or {}
+    mobile_visual = screenshot_brief.get("visual_summary", {}).get("mobile", {}) or {}
+
+    image_density = "high" if visual_brief.get("image_count", 0) >= max(6, visual_brief.get("heading_count", 0) * 2) else "moderate"
+    if visual_brief.get("image_count", 0) <= 2:
+        image_density = "low"
+
+    composition = "long-scroll editorial pacing" if desktop_visual.get("section_bands", 0) >= 12 else "compact section pacing"
+    if visual_brief.get("section_count", 0) >= 6:
+        composition = "modular long-scroll composition"
+
+    return {
+        "typography": {
+            "display_font": summarize_font_role(fonts[:1], "serif display"),
+            "body_font": summarize_font_role(fonts[1:2], fonts[0] if fonts else "clean sans"),
+            "uppercase_accents": uppercase_bias,
+            "letter_spacing_em": letter_spacing_values[:3],
+        },
+        "color_system": {
+            "palette": palette[:6],
+            "brightness": desktop_visual.get("brightness_mode", "unknown"),
+            "contrast": desktop_visual.get("contrast_level", "unknown"),
+            "saturation": desktop_visual.get("saturation_level", "unknown"),
+        },
+        "spacing": {
+            "section_padding_scale": summarize_numeric_scale([v for v in section_padding_values if v >= 24]),
+            "gap_scale": summarize_numeric_scale([v for v in gap_values if v >= 8]),
+            "radius_scale": summarize_numeric_scale([v for v in radius_values if v >= 4]),
+            "content_width_scale": summarize_numeric_scale([v for v in max_width_values if v >= 480]),
+        },
+        "components": detect_component_patterns(html, css_text),
+        "composition": {
+            "image_density": image_density,
+            "desktop_pacing": composition,
+            "mobile_pacing": "long-scroll mobile rhythm" if mobile_visual.get("section_bands", 0) >= 18 else "compact mobile rhythm",
+            "section_count": visual_brief.get("section_count", 0),
+        },
+    }
+
+
 def extract_visual_brief(html: str, base_url: str) -> dict:
     stylesheet_urls = extract_stylesheet_urls(html, base_url)
     css_chunks: list[str] = []
@@ -961,12 +1085,14 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
             ref_assets = extract_asset_candidates(ref_html, reference["url"])
             visual_brief = extract_visual_brief(ref_html, reference["url"])
             screenshot_brief = capture_and_analyze_visuals(analysis_dir, f"reference-{index:02d}-{slug}", reference["url"])
+            reference_blueprint = extract_reference_blueprint(ref_html, reference["url"], visual_brief, screenshot_brief)
             payload = {
                 "reference": reference,
                 "analysis": ref_analysis,
                 "asset_candidates": ref_assets,
                 "visual_brief": visual_brief,
                 "screenshot_brief": screenshot_brief,
+                "reference_blueprint": reference_blueprint,
             }
             output_file = analysis_dir / f"reference-{index:02d}-{slug}.json"
             output_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -979,6 +1105,7 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
                     "asset_candidates": ref_assets,
                     "visual_brief": visual_brief,
                     "screenshot_brief": screenshot_brief,
+                    "reference_blueprint": reference_blueprint,
                 }
             )
         except Exception as exc:
@@ -1048,9 +1175,11 @@ def build_prompt_parts(request: dict, job_dir: Path) -> tuple[dict, list[str]]:
     source_desktop_visual = source_visuals.get("visual_summary", {}).get("desktop", {}) or {}
 
     ref_lines = []
+    blueprint_lines = []
     for item in ref_contexts:
         visual = item.get("visual_brief", {}) or {}
         screenshot_brief = item.get("screenshot_brief", {}) or {}
+        blueprint = item.get("reference_blueprint", {}) or {}
         desktop_visual = screenshot_brief.get("visual_summary", {}).get("desktop", {}) or {}
         mobile_visual = screenshot_brief.get("visual_summary", {}).get("mobile", {}) or {}
         visual_lines = []
@@ -1081,6 +1210,8 @@ def build_prompt_parts(request: dict, job_dir: Path) -> tuple[dict, list[str]]:
             reference_chars_limit = limits["reference_chars"]
             if desktop_visual or mobile_visual:
                 reference_chars_limit = min(reference_chars_limit, 160)
+            if blueprint:
+                reference_chars_limit = min(reference_chars_limit, 110)
             ref_lines.append(
                 "\n".join(
                     [
@@ -1104,6 +1235,26 @@ def build_prompt_parts(request: dict, job_dir: Path) -> tuple[dict, list[str]]:
                 )
             )
 
+        if blueprint:
+            typography = blueprint.get("typography", {}) or {}
+            color_system = blueprint.get("color_system", {}) or {}
+            spacing = blueprint.get("spacing", {}) or {}
+            components = blueprint.get("components", {}) or {}
+            composition = blueprint.get("composition", {}) or {}
+            blueprint_lines.append(
+                "\n".join(
+                    [
+                        f"- URL: {item['url']}",
+                        f"  Blueprint focus: {item.get('focus') or 'General visual direction'}",
+                        f"  Typography: display={typography.get('display_font', 'unknown')}, body={typography.get('body_font', 'unknown')}, uppercase_accents={typography.get('uppercase_accents', False)}",
+                        f"  Color system: palette={', '.join(color_system.get('palette', [])[:5]) or 'none'}, brightness={color_system.get('brightness', 'unknown')}, contrast={color_system.get('contrast', 'unknown')}, saturation={color_system.get('saturation', 'unknown')}",
+                        f"  Spacing system: section_padding={spacing.get('section_padding_scale', 'unknown')}, gaps={spacing.get('gap_scale', 'unknown')}, radius={spacing.get('radius_scale', 'unknown')}, content_width={spacing.get('content_width_scale', 'unknown')}",
+                        f"  Components: header={components.get('header', 'unknown')}, hero={components.get('hero', 'unknown')}, buttons={components.get('buttons', 'unknown')}, cards={components.get('cards', 'unknown')}",
+                        f"  Composition: image_density={composition.get('image_density', 'unknown')}, desktop_pacing={composition.get('desktop_pacing', 'unknown')}, mobile_pacing={composition.get('mobile_pacing', 'unknown')}, sections={composition.get('section_count', 0)}",
+                    ]
+                )
+            )
+
     skill_files = resolve_skill_files(request)
     skill_names = [path.stem for path in skill_files]
     skill_bundle = render_skill_bundle(skill_files)
@@ -1121,6 +1272,15 @@ Follow these standing rules exactly:
 
 Skill directives:
 {skill_bundle}
+"""
+
+    design_guardrails = """Pre-generation design guardrails:
+- Do not use overused default fonts like Inter, Roboto, Open Sans, Lato, Montserrat, or Arial as the primary personality font unless the reference blueprint explicitly requires them.
+- Do not use gradient text, decorative background-clip text, or flashy AI-tell effects.
+- Ensure body text and CTA text clearly exceed WCAG AA contrast; do not leave near-failing warm-on-cream combinations.
+- Do not animate layout properties like width, height, padding, or margin. Prefer transform and opacity.
+- Avoid uppercase for long body copy; reserve it for short labels only.
+- Avoid generic SaaS hero composition. The first draft should already feel editorial and reference-led.
 """
 
     operator_controls = f"""Operator controls:
@@ -1166,6 +1326,7 @@ Skill directives:
 """
 
     reference_block = "Design references:\n" + ("\n".join(ref_lines) if ref_lines else "- None supplied")
+    reference_blueprint_block = "Reference design blueprint:\n" + ("\n".join(blueprint_lines) if blueprint_lines else "- No blueprint extracted")
     enrichment_lines = []
     for item in enrichment.get("results", [])[: request["search_budget"]]:
         enrichment_lines.append(
@@ -1188,6 +1349,8 @@ Skill directives:
 - Use the design references for layout, typography, spacing, rhythm, and visual tone, but do not copy branding directly.
 - Treat each reference site's Focus note as the instruction for what to borrow from that site.
 - Match the dominant reference site's visual system deliberately: typography feel, spacing scale, image density, and section cadence should be recognizably inspired by it.
+- Use the reference design blueprint as a concrete system, not just loose inspiration. Re-express the source business in that structural and component language.
+- Copy reusable design mechanics from the reference where appropriate: container widths, section cadence, serif/sans relationship, button silhouette, card softness, and header/hero treatment.
 - Use the screenshot-derived visual cues from the reference to shape the page mood, visual density, and pacing, not just the reference text summary.
 - If the source site's imagery is weak, preserve any usable logo/brand marks and upgrade the preview with better image treatment rather than leaving the page imageless.
 - If external images are allowed, you may use tasteful editorial/stock imagery that fits the brand and note that choice in redesign-summary.md.
@@ -1197,10 +1360,12 @@ Skill directives:
 
     parts = {
         "stable_prefix": stable_prefix,
+        "design_guardrails": design_guardrails,
         "operator_controls": operator_controls,
         "business_profile": business_profile_block,
         "source_context": source_context_block,
         "reference_context": reference_block,
+        "reference_blueprint": reference_blueprint_block,
         "external_enrichment": enrichment_block,
         "asset_strategy": asset_block,
         "implementation_expectations": implementation_block,

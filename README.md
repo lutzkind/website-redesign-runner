@@ -112,10 +112,12 @@ This makes the design system tunable without changing Python code:
 - each reference can include a `focus` field describing what the model should borrow from that site
 - the runner now captures desktop and mobile screenshots for the source site and references, then derives a visual brief from those images
 - each reference now gets a stronger visual brief: palette cues, brightness/contrast, saturation, section rhythm, image density, and mood signals
+- each reference now also gets a CSS/DOM-driven `reference_blueprint` with typography roles, spacing scales, component patterns, and composition hints that are fed into the first generation pass
 - the runner extracts source and reference asset candidates so the model can reuse logos/photos when helpful instead of returning imageless redesigns
 - the runner scores source completeness and, when needed, uses Firecrawl search to enrich weak websites with external business context
 - the runner writes `/jobs/<job_id>/source/analysis/business-profile.json` so prompts can use compact structured facts instead of raw scrape dumps
 - screenshot and visual-analysis artifacts are stored per job under `/data/jobs/<job_id>/source/analysis/`
+- the first generation pass now receives explicit anti-pattern guardrails inspired by `impeccable` before any post-generation critique runs
 - the runner now writes `/jobs/<job_id>/prompt.metrics.json` so you can see estimated token spend by prompt section
 - after generation, the runner can run `impeccable detect --json dist/` and optionally launch a compact repair pass against only the generated preview files
 - if Firecrawl is unavailable for the source site, the runner falls back to a direct HTML fetch so jobs still run
