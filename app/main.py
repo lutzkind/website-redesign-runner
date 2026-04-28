@@ -12,7 +12,7 @@ from urllib.error import HTTPError, URLError
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -27,6 +27,8 @@ DEFAULT_INDUSTRY = os.environ.get("WEBSITE_REDESIGN_DEFAULT_INDUSTRY", "general"
 FIRECRAWL_URL = os.environ.get("WEBSITE_REDESIGN_FIRECRAWL_URL", "http://127.0.0.1:3092").rstrip("/")
 MAX_REFERENCE_SITES = int(os.environ.get("WEBSITE_REDESIGN_MAX_REFERENCE_SITES", "3"))
 FIRECRAWL_SCRAPE_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_FIRECRAWL_TIMEOUT", "90"))
+ALLOWED_GENERATOR_PROFILES = {"lean", "balanced", "quality"}
+ALLOWED_IMAGE_STRATEGIES = {"source-only", "source-first", "hybrid", "stock-first"}
 DEFAULT_SKILLS = [
     item.strip()
     for item in os.environ.get(
@@ -85,6 +87,21 @@ def slugify(value: str) -> str:
     cleaned = re.sub(r"[^a-z0-9]+", "-", lowered)
     cleaned = re.sub(r"-{2,}", "-", cleaned).strip("-")
     return cleaned or f"site-{uuid.uuid4().hex[:8]}"
+
+
+def parse_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    lowered = str(value).strip().lower()
+    if lowered in {"1", "true", "yes", "y", "on"}:
+        return True
+    if lowered in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
 
 
 def parse_json_body(handler: BaseHTTPRequestHandler) -> dict:
@@ -239,6 +256,17 @@ def normalize_request(payload: dict) -> dict:
     normalized_refs = [normalize_reference_item(item) for item in refs if str(item).strip() or isinstance(item, dict)]
     client_slug = payload.get("client_slug") or parsed.netloc
     industry = slugify(str(payload.get("industry") or DEFAULT_INDUSTRY))
+    generator_profile = str(payload.get("generator_profile") or "balanced").strip().lower()
+    if generator_profile not in ALLOWED_GENERATOR_PROFILES:
+        raise ValueError(f"generator_profile must be one of: {', '.join(sorted(ALLOWED_GENERATOR_PROFILES))}")
+    image_strategy = str(payload.get("image_strategy") or "hybrid").strip().lower()
+    if image_strategy not in ALLOWED_IMAGE_STRATEGIES:
+        raise ValueError(f"image_strategy must be one of: {', '.join(sorted(ALLOWED_IMAGE_STRATEGIES))}")
+    reference_limit = payload.get("reference_limit", MAX_REFERENCE_SITES)
+    try:
+        reference_limit = max(0, min(int(reference_limit), MAX_REFERENCE_SITES))
+    except Exception:
+        raise ValueError("reference_limit must be an integer")
 
     return {
         "website_url": website_url,
@@ -252,6 +280,13 @@ def normalize_request(payload: dict) -> dict:
         "industry": industry,
         "enabled_skills": normalized_skills or list(DEFAULT_SKILLS),
         "extra_instructions": str(payload.get("extra_instructions", "")).strip(),
+        "generator_profile": generator_profile,
+        "image_strategy": image_strategy,
+        "reuse_source_images": parse_bool(payload.get("reuse_source_images"), True),
+        "allow_external_images": parse_bool(payload.get("allow_external_images"), True),
+        "reference_limit": reference_limit,
+        "design_goal": str(payload.get("design_goal", "")).strip(),
+        "prompt_append": str(payload.get("prompt_append", "")).strip(),
     }
 
 
@@ -339,6 +374,47 @@ def render_skill_bundle(skill_files: list[Path]) -> str:
     return "\n\n".join(sections)
 
 
+def extract_asset_candidates(html: str, base_url: str) -> list[dict]:
+    if not html:
+        return []
+
+    candidates: list[dict] = []
+    seen: set[str] = set()
+    patterns = [
+        (r"<img[^>]+src=[\"']([^\"']+)[\"'][^>]*?(?:alt=[\"']([^\"']*)[\"'])?[^>]*>", "image"),
+        (r"<meta[^>]+property=[\"']og:image[\"'][^>]+content=[\"']([^\"']+)[\"'][^>]*>", "og-image"),
+        (r"<meta[^>]+name=[\"']twitter:image[\"'][^>]+content=[\"']([^\"']+)[\"'][^>]*>", "social-image"),
+        (r"<link[^>]+rel=[\"'][^\"']*icon[^\"']*[\"'][^>]+href=[\"']([^\"']+)[\"'][^>]*>", "icon"),
+    ]
+    for pattern, asset_type in patterns:
+        for match in re.finditer(pattern, html, flags=re.IGNORECASE):
+            src = match.group(1).strip() if match.group(1) else ""
+            if not src:
+                continue
+            full_url = urljoin(base_url, src)
+            if full_url in seen:
+                continue
+            seen.add(full_url)
+            alt = ""
+            if match.lastindex and match.lastindex > 1 and match.group(2):
+                alt = match.group(2).strip()
+            lower = full_url.lower()
+            role = "general"
+            if "logo" in lower or "brand" in lower or asset_type == "icon":
+                role = "logo"
+            candidates.append(
+                {
+                    "type": asset_type,
+                    "url": full_url,
+                    "alt": alt,
+                    "role": role,
+                }
+            )
+            if len(candidates) >= 12:
+                return candidates
+    return candidates
+
+
 def fetch_source_html(job_dir: Path, request: dict) -> dict:
     source_root = job_dir / "source"
     source_root.mkdir(parents=True, exist_ok=True)
@@ -394,25 +470,37 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
         host_root = source_root / request["hostname"]
         host_root.mkdir(parents=True, exist_ok=True)
         (host_root / "index.html").write_text(html, encoding="utf-8")
+        asset_candidates = extract_asset_candidates(html, request["website_url"])
         result["source"] = {
             "method": "firecrawl",
             "analysis_file": str(analysis_dir / "source.json"),
             "source_root": str(source_root),
             "index_file": str(host_root / "index.html"),
             "summary": source_analysis["summary"],
+            "asset_candidates": asset_candidates,
         }
     except Exception as exc:
         fallback = fetch_source_html(job_dir, request)
         fallback["warning"] = f"Firecrawl source analysis unavailable: {exc}"
+        try:
+            html = Path(fallback["index_file"]).read_text(encoding="utf-8")
+            fallback["asset_candidates"] = extract_asset_candidates(html, request["website_url"])
+        except Exception:
+            fallback["asset_candidates"] = []
         result["source"] = fallback
 
-    for index, reference in enumerate(request["design_references"][:MAX_REFERENCE_SITES], start=1):
+    for index, reference in enumerate(request["design_references"][: request["reference_limit"]], start=1):
         slug = slugify(reference["hostname"])
         try:
             ref_analysis = analyze_with_firecrawl(reference["url"], include_map=False)
+            ref_assets = extract_asset_candidates(
+                ref_analysis["scrape"].get("data", {}).get("html", ""),
+                reference["url"],
+            )
             payload = {
                 "reference": reference,
                 "analysis": ref_analysis,
+                "asset_candidates": ref_assets,
             }
             output_file = analysis_dir / f"reference-{index:02d}-{slug}.json"
             output_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -422,6 +510,7 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
                     "focus": reference["focus"],
                     "analysis_file": str(output_file),
                     "summary": ref_analysis["summary"],
+                    "asset_candidates": ref_assets,
                 }
             )
         except Exception as exc:
@@ -436,70 +525,146 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
     return result
 
 
-def build_prompt(request: dict, job_dir: Path) -> tuple[str, list[str]]:
-    source_context = request.get("source_context") or {}
-    source_summary = source_context.get("source", {}).get("summary", {})
-    ref_contexts = source_context.get("references", [])
+def profile_limits(profile: str) -> dict:
+    if profile == "lean":
+        return {"source_chars": 700, "reference_chars": 280, "links": 4, "assets": 4}
+    if profile == "quality":
+        return {"source_chars": 1200, "reference_chars": 520, "links": 8, "assets": 8}
+    return {"source_chars": 900, "reference_chars": 380, "links": 6, "assets": 6}
 
-    refs = "\n".join(
-        [
-            f"- URL: {item['url']}\n  Focus: {item.get('focus') or 'General visual direction'}"
-            + (
-                f"\n  Title: {item.get('summary', {}).get('title', '')}"
-                f"\n  Notes: {truncate_text(item.get('summary', {}).get('markdown_excerpt', ''), 700)}"
-                if item.get("summary")
-                else f"\n  Analysis status: {item.get('error', 'Not analyzed')}"
+
+def render_asset_guidance(request: dict, source_assets: list[dict]) -> str:
+    strategy = request["image_strategy"]
+    if strategy == "source-only":
+        mode = "Use only source-site assets and logos. Do not introduce external imagery."
+    elif strategy == "source-first":
+        mode = "Prefer source-site assets and logos. Only use external imagery if the source lacks a credible hero image."
+    elif strategy == "stock-first":
+        mode = "Prefer external editorial/stock imagery while preserving any usable source logo or icon."
+    else:
+        mode = "Use a hybrid approach: preserve any usable logo or brand mark, reuse good source photos when credible, and supplement weak imagery with high-quality external/editorial imagery."
+
+    external = (
+        "External imagery is allowed."
+        if request["allow_external_images"]
+        else "External imagery is not allowed; work only with source assets and non-photographic treatments."
+    )
+    reuse = (
+        "Reusing source images is encouraged when quality is acceptable."
+        if request["reuse_source_images"]
+        else "Do not reuse source photography unless absolutely necessary."
+    )
+    candidates = "\n".join(
+        f"- {item['url']} ({item.get('role', 'general')}{', alt=' + item['alt'] if item.get('alt') else ''})"
+        for item in source_assets[:8]
+    ) or "- None detected"
+    return f"""{mode}
+{external}
+{reuse}
+
+Detected source asset candidates:
+{candidates}
+"""
+
+
+def build_prompt_parts(request: dict, job_dir: Path) -> tuple[dict, list[str]]:
+    source_context = request.get("source_context") or {}
+    source = source_context.get("source", {})
+    source_summary = source.get("summary", {})
+    ref_contexts = source_context.get("references", [])
+    limits = profile_limits(request["generator_profile"])
+    source_assets = source.get("asset_candidates", []) or []
+
+    ref_lines = []
+    for item in ref_contexts:
+        if item.get("summary"):
+            summary = item["summary"]
+            ref_lines.append(
+                "\n".join(
+                    [
+                        f"- URL: {item['url']}",
+                        f"  Focus: {item.get('focus') or 'General visual direction'}",
+                        f"  Title: {summary.get('title', '')}",
+                        f"  Notes: {truncate_text(summary.get('markdown_excerpt', ''), limits['reference_chars'])}",
+                    ]
+                )
             )
-            for item in ref_contexts
-        ]
-    ) or "- None supplied"
-    notes = request["brand_notes"] or "No extra brand notes provided."
-    extra = request["extra_instructions"] or "None."
+        else:
+            ref_lines.append(
+                "\n".join(
+                    [
+                        f"- URL: {item['url']}",
+                        f"  Focus: {item.get('focus') or 'General visual direction'}",
+                        f"  Analysis status: {item.get('error', 'Not analyzed')}",
+                    ]
+                )
+            )
+
     skill_files = resolve_skill_files(request)
     skill_names = [path.stem for path in skill_files]
     skill_bundle = render_skill_bundle(skill_files)
 
-    prompt = f"""You are redesigning a client's website into a polished static preview.
+    stable_prefix = f"""You are redesigning a client's website into a polished static preview.
 
-Source website:
-- URL: {request["website_url"]}
-- Captured source HTML is available under ./source
-- Source title: {source_summary.get("title", "")}
-- Source summary:
-{truncate_text(source_summary.get("markdown_excerpt", "") or "No Firecrawl summary captured.", 1400)}
-- Important discovered links:
-{chr(10).join(f"  - {link}" for link in source_summary.get("top_links", [])[:8]) or "  - None"}
-
-Design references:
-{refs}
-
-Brand notes:
-{notes}
-
-Industry:
-- {request["industry"]}
-
-Additional instructions:
-{extra}
+Follow these standing rules exactly:
+1. Build a redesigned static website preview in ./dist.
+2. Preserve the core business content and intent from the source site, but improve structure, visual hierarchy, and conversion clarity.
+3. Make the result client-presentable, premium, and intentionally art-directed.
+4. Ensure ./dist/index.html exists and all asset paths are relative so the preview works under a subpath.
+5. Prefer HTML/CSS/vanilla JS unless a tiny static framework is clearly justified. Do not require a build step for previewing.
+6. Write a concise implementation summary to ./dist/redesign-summary.md.
+7. Before finishing, verify the preview files exist in ./dist.
 
 Skill directives:
 {skill_bundle}
-
-Requirements:
-1. Build a redesigned static website preview in ./dist.
-2. Preserve the core content, sections, and intent from the source site where practical.
-3. Use the design references for layout, typography, spacing, and visual direction, but do not copy branding directly.
-3a. Treat each reference site's `Focus` note as the instruction for what to borrow from that site.
-4. Ensure ./dist/index.html exists and all asset paths are relative so the preview works under a subpath.
-5. Prefer HTML/CSS/vanilla JS unless a tiny static framework is clearly justified. Do not require a build step for previewing.
-6. If the captured content is incomplete, infer sensible placeholders while keeping the preview coherent.
-7. Write a short implementation summary to ./dist/redesign-summary.md.
-8. Favor a premium result over a safe one. Avoid default-looking landing pages.
-
-Before finishing:
-- Verify the preview files exist in ./dist.
-- Keep the result client-presentable.
 """
+
+    operator_controls = f"""Operator controls:
+- Industry: {request['industry']}
+- Generator profile: {request['generator_profile']}
+- Design goal: {request['design_goal'] or 'General premium redesign'}
+- Brand notes: {request['brand_notes'] or 'None'}
+- Additional instructions: {request['extra_instructions'] or 'None'}
+- Prompt append: {request['prompt_append'] or 'None'}
+"""
+
+    source_context_block = f"""Source website:
+- URL: {request['website_url']}
+- Captured source HTML is available under ./source
+- Source title: {source_summary.get('title', '')}
+- Source summary:
+{truncate_text(source_summary.get('markdown_excerpt', '') or 'No Firecrawl summary captured.', limits['source_chars'])}
+- Important discovered links:
+{chr(10).join(f"  - {link}" for link in source_summary.get('top_links', [])[:limits['links']]) or '  - None'}
+"""
+
+    reference_block = "Design references:\n" + ("\n".join(ref_lines) if ref_lines else "- None supplied")
+    asset_block = "Image and asset strategy:\n" + render_asset_guidance(request, source_assets)
+
+    implementation_block = """Implementation expectations:
+- Use the design references for layout, typography, spacing, rhythm, and visual tone, but do not copy branding directly.
+- Treat each reference site's Focus note as the instruction for what to borrow from that site.
+- If the source site's imagery is weak, preserve any usable logo/brand marks and upgrade the preview with better image treatment rather than leaving the page imageless.
+- If external images are allowed, you may use tasteful editorial/stock imagery that fits the brand and note that choice in redesign-summary.md.
+- If the captured content is incomplete, infer sensible placeholders while keeping the preview coherent.
+- Avoid generic AI landing-page patterns, default fonts, and flat section stacking.
+"""
+
+    parts = {
+        "stable_prefix": stable_prefix,
+        "operator_controls": operator_controls,
+        "source_context": source_context_block,
+        "reference_context": reference_block,
+        "asset_strategy": asset_block,
+        "implementation_expectations": implementation_block,
+    }
+    return parts, skill_names
+
+
+def build_prompt(request: dict, job_dir: Path) -> tuple[str, list[str]]:
+    parts, skill_names = build_prompt_parts(request, job_dir)
+    prompt = "\n\n".join(parts.values())
+    (job_dir / "prompt.parts.json").write_text(json.dumps(parts, indent=2), encoding="utf-8")
     return prompt, skill_names
 
 
@@ -777,6 +942,8 @@ class Handler(BaseHTTPRequestHandler):
                     "public_base_url": PUBLIC_BASE_URL,
                     "firecrawl_url": FIRECRAWL_URL,
                     "model_policy": "deny-openrouter",
+                    "generator_profiles": sorted(ALLOWED_GENERATOR_PROFILES),
+                    "image_strategies": sorted(ALLOWED_IMAGE_STRATEGIES),
                     "skills": list_available_skills(),
                 }
             )
@@ -816,6 +983,14 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json({"error": "prompt not found"}, status=404)
                     return
                 self._send_file(prompt_path, "text/plain; charset=utf-8")
+                return
+            if len(parts) >= 3 and parts[2] == "prompt-parts":
+                job_id = parts[1]
+                prompt_parts_path = job_dir_path(job_id) / "prompt.parts.json"
+                if not prompt_parts_path.exists():
+                    self._send_json({"error": "prompt parts not found"}, status=404)
+                    return
+                self._send_file(prompt_parts_path, "application/json; charset=utf-8")
                 return
 
             job_id = parts[1]
@@ -893,6 +1068,7 @@ class Handler(BaseHTTPRequestHandler):
                 "status": "queued",
                 "status_url": f"{PUBLIC_BASE_URL}/jobs/{job_id}",
                 "prompt_url": f"{PUBLIC_BASE_URL}/jobs/{job_id}/prompt",
+                "prompt_parts_url": f"{PUBLIC_BASE_URL}/jobs/{job_id}/prompt-parts",
             },
             status=HTTPStatus.ACCEPTED,
         )

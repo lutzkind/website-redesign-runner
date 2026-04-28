@@ -19,6 +19,7 @@ Git-backed runner for AI website redesign jobs.
 - `POST /jobs`
 - `GET /jobs/<job_id>`
 - `GET /jobs/<job_id>/prompt`
+- `GET /jobs/<job_id>/prompt-parts`
 - `GET /preview/<client-slug>/`
 
 ## Request shape
@@ -38,6 +39,12 @@ Git-backed runner for AI website redesign jobs.
   ],
   "client_slug": "example-client",
   "industry": "restaurant",
+  "generator_profile": "quality",
+  "reference_limit": 1,
+  "image_strategy": "hybrid",
+  "reuse_source_images": true,
+  "allow_external_images": true,
+  "design_goal": "Luxury redesign that feels expensive and cinematic.",
   "brand_notes": "Premium editorial redesign with stronger reservation CTA.",
   "enabled_skills": [
     "website-audit",
@@ -47,10 +54,30 @@ Git-backed runner for AI website redesign jobs.
     "design-critic"
   ],
   "extra_instructions": "Keep the menu visible above the fold on desktop.",
+  "prompt_append": "Push harder on atmospheric imagery and premium materials.",
   "notify_email": "lutz.kind96@gmail.com",
   "dry_run": false
 }
 ```
+
+## Iteration controls
+
+The runner now exposes the main operator levers directly in the job payload:
+
+- `generator_profile`: `lean`, `balanced`, or `quality`
+- `reference_limit`: clamp references per run without editing the reference list
+- `image_strategy`: `source-only`, `source-first`, `hybrid`, or `stock-first`
+- `reuse_source_images`: whether to keep using source imagery when it is good enough
+- `allow_external_images`: whether the model may upgrade weak photography with external/editorial imagery
+- `design_goal`: short statement of the intended creative outcome
+- `prompt_append`: last-mile operator note appended into the prompt controls
+
+For prompt inspection:
+
+- `GET /jobs/<job_id>/prompt` returns the final prompt string
+- `GET /jobs/<job_id>/prompt-parts` returns the structured prompt sections used to build it
+
+This is enough to iterate without a dashboard at first. A dashboard becomes useful once you want saved presets, prompt/version history, and one-click reruns.
 
 ## Skill system
 
@@ -73,6 +100,7 @@ This makes the design system tunable without changing Python code:
 - the runner uses Firecrawl to scrape the source site into markdown + HTML
 - it also scrapes the first few reference sites so the prompt includes their actual structure and tone, not just their URLs
 - each reference can include a `focus` field describing what the model should borrow from that site
+- the runner extracts source and reference asset candidates so the model can reuse logos/photos when helpful instead of returning imageless redesigns
 - if Firecrawl is unavailable for the source site, the runner falls back to a direct HTML fetch so jobs still run
 - for Docker/Coolify deploys, set `WEBSITE_REDESIGN_FIRECRAWL_URL` to the reachable Firecrawl endpoint from inside the container
 
@@ -81,6 +109,7 @@ This makes the design system tunable without changing Python code:
 - the runner refuses to start with any `openrouter/*` model path
 - default deployment model is `deepseek/deepseek-v4-flash`
 - configure `WEBSITE_REDESIGN_MODEL` to a non-OpenRouter OpenCode model only
+- DeepSeek prompt caching is automatic at the API layer; the runner keeps stable prompt sections first so repeated jobs and agent turns are more cache-friendly
 
 ## Local run
 
