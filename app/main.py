@@ -8,6 +8,7 @@ import threading
 import time
 import traceback
 import uuid
+from colorsys import rgb_to_hsv
 from urllib.error import HTTPError, URLError
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -27,6 +28,7 @@ DEFAULT_INDUSTRY = os.environ.get("WEBSITE_REDESIGN_DEFAULT_INDUSTRY", "general"
 FIRECRAWL_URL = os.environ.get("WEBSITE_REDESIGN_FIRECRAWL_URL", "http://127.0.0.1:3092").rstrip("/")
 MAX_REFERENCE_SITES = int(os.environ.get("WEBSITE_REDESIGN_MAX_REFERENCE_SITES", "3"))
 FIRECRAWL_SCRAPE_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_FIRECRAWL_TIMEOUT", "90"))
+SCREENSHOT_CAPTURE_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_SCREENSHOT_TIMEOUT", "120"))
 ALLOWED_GENERATOR_PROFILES = {"lean", "balanced", "quality"}
 ALLOWED_IMAGE_STRATEGIES = {"source-only", "source-first", "hybrid", "stock-first"}
 ALLOWED_SOURCE_EXPANSION_MODES = {"strict", "balanced", "aggressive"}
@@ -163,6 +165,13 @@ def run_command(
     )
 
 
+def safe_relativize(path: Path, base: Path) -> str:
+    try:
+        return str(path.relative_to(base))
+    except Exception:
+        return str(path)
+
+
 def load_global_opencode_config() -> dict:
     if not GLOBAL_OPENCODE_CONFIG.exists():
         return {}
@@ -208,6 +217,179 @@ def truncate_text(value: str, limit: int = 1800) -> str:
     if len(value) <= limit:
         return value
     return value[: limit - 3].rstrip() + "..."
+
+
+def capture_site_screenshots(output_dir: Path, url: str, label: str) -> dict:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    captures = {
+        "desktop": output_dir / f"{label}-desktop.png",
+        "mobile": output_dir / f"{label}-mobile.png",
+    }
+    capture_log = output_dir / f"{label}-screenshot.log"
+    log_chunks: list[str] = []
+    results: dict[str, str] = {}
+
+    for device_name, output_path in (
+        ("Desktop Chrome", captures["desktop"]),
+        ("iPhone 13", captures["mobile"]),
+    ):
+        cmd = [
+            "node",
+            "/app/app/capture_screenshot.mjs",
+            url,
+            str(output_path),
+            device_name,
+        ]
+        result = run_command(cmd, timeout=SCREENSHOT_CAPTURE_TIMEOUT)
+        log_chunks.append(
+            "\n".join(
+                [
+                    f"[{device_name}] exit_code={result.returncode}",
+                    f"STDOUT:\n{result.stdout}",
+                    f"STDERR:\n{result.stderr}",
+                ]
+            )
+        )
+        if result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 0:
+            results[device_name.lower().replace(" ", "_")] = str(output_path)
+
+    capture_log.write_text("\n\n".join(log_chunks), encoding="utf-8")
+    return {
+        "desktop": str(captures["desktop"]) if captures["desktop"].exists() else "",
+        "mobile": str(captures["mobile"]) if captures["mobile"].exists() else "",
+        "log": str(capture_log),
+        "successful": [name for name, path in results.items() if path],
+    }
+
+
+def image_to_hex(rgb: tuple[int, int, int]) -> str:
+    return "#{:02x}{:02x}{:02x}".format(*rgb)
+
+
+def classify_brightness(value: float) -> str:
+    if value < 70:
+        return "dark"
+    if value < 150:
+        return "balanced"
+    return "light"
+
+
+def classify_contrast(value: float) -> str:
+    if value < 35:
+        return "soft"
+    if value < 70:
+        return "moderate"
+    return "high"
+
+
+def classify_saturation(value: float) -> str:
+    if value < 0.18:
+        return "muted"
+    if value < 0.4:
+        return "restrained"
+    return "vivid"
+
+
+def estimate_horizontal_bands(img) -> int:
+    width, height = img.size
+    step = max(1, height // 180)
+    samples = []
+    for y in range(0, height, step):
+        row = img.crop((0, y, width, min(height, y + step)))
+        r, g, b = row.resize((1, 1)).getpixel((0, 0))
+        samples.append((r + g + b) / 3)
+    if len(samples) < 2:
+        return 0
+    transitions = 0
+    prev = samples[0]
+    for current in samples[1:]:
+        if abs(current - prev) >= 18:
+            transitions += 1
+        prev = current
+    return transitions
+
+
+def analyze_screenshot_visuals(image_path: Path) -> dict:
+    from PIL import Image, ImageStat
+
+    with Image.open(image_path) as img:
+        img = img.convert("RGB")
+        width, height = img.size
+        thumb = img.resize((max(24, min(160, width // 10)), max(24, min(240, height // 10))))
+        quantized = thumb.quantize(colors=6, method=Image.Quantize.MEDIANCUT).convert("RGB")
+        thumb_pixels = list(thumb.getdata())
+        color_counts: dict[str, int] = {}
+        for pixel in quantized.getdata():
+            key = image_to_hex(pixel)
+            color_counts[key] = color_counts.get(key, 0) + 1
+        palette = [color for color, _ in sorted(color_counts.items(), key=lambda item: (-item[1], item[0]))[:6]]
+
+        stat = ImageStat.Stat(thumb)
+        means = stat.mean[:3]
+        stddev = stat.stddev[:3]
+        luminance = 0.2126 * means[0] + 0.7152 * means[1] + 0.0722 * means[2]
+        contrast = sum(stddev) / len(stddev)
+
+        hsv_values = [rgb_to_hsv(*(channel / 255 for channel in pixel)) for pixel in thumb_pixels]
+        avg_saturation = sum(item[1] for item in hsv_values) / max(1, len(hsv_values))
+        warm_pixels = 0
+        for pixel in thumb_pixels:
+            r, g, b = pixel
+            if r > b + 18 and r >= g:
+                warm_pixels += 1
+        warm_ratio = warm_pixels / max(1, len(thumb_pixels))
+        bands = estimate_horizontal_bands(thumb)
+        aspect = width / max(1, height)
+
+    mood_signals = []
+    brightness_mode = classify_brightness(luminance)
+    if brightness_mode == "dark":
+        mood_signals.append("dark visual base")
+    elif brightness_mode == "light":
+        mood_signals.append("light airy base")
+    if classify_contrast(contrast) == "high":
+        mood_signals.append("high contrast framing")
+    if classify_saturation(avg_saturation) == "muted":
+        mood_signals.append("muted color restraint")
+    elif classify_saturation(avg_saturation) == "vivid":
+        mood_signals.append("vivid color accents")
+    if warm_ratio >= 0.42:
+        mood_signals.append("warm photographic tone")
+    if bands >= 5:
+        mood_signals.append("strong vertical section rhythm")
+    if aspect < 0.55:
+        mood_signals.append("long-scroll editorial pacing")
+
+    return {
+        "path": str(image_path),
+        "size": {"width": width, "height": height},
+        "palette": palette,
+        "brightness_mode": brightness_mode,
+        "contrast_level": classify_contrast(contrast),
+        "saturation_level": classify_saturation(avg_saturation),
+        "warmth_ratio": round(warm_ratio, 3),
+        "section_bands": bands,
+        "mood_signals": mood_signals,
+    }
+
+
+def capture_and_analyze_visuals(analysis_dir: Path, label: str, url: str) -> dict:
+    screenshots_dir = analysis_dir / "screenshots"
+    capture = capture_site_screenshots(screenshots_dir, url, label)
+    visual_summary: dict[str, dict] = {}
+    for key in ("desktop", "mobile"):
+        path_value = capture.get(key)
+        if not path_value:
+            continue
+        image_path = Path(path_value)
+        try:
+            visual_summary[key] = analyze_screenshot_visuals(image_path)
+        except Exception as exc:
+            visual_summary[key] = {"path": str(image_path), "error": str(exc)}
+    return {
+        "screenshots": capture,
+        "visual_summary": visual_summary,
+    }
 
 
 def normalize_reference_item(item) -> dict:
@@ -736,6 +918,11 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
     source_summary = result["source"].get("summary", {}) if isinstance(result["source"], dict) else {}
     source_assets = result["source"].get("asset_candidates", []) if isinstance(result["source"], dict) else []
     top_links = source_summary.get("top_links", []) if isinstance(source_summary, dict) else []
+    try:
+        source_visuals = capture_and_analyze_visuals(analysis_dir, "source", request["website_url"])
+        result["source"]["visuals"] = source_visuals
+    except Exception as exc:
+        result["source"]["visuals"] = {"error": str(exc)}
     completeness = score_source_completeness(source_summary, source_assets, top_links)
     result["source"]["completeness"] = completeness
 
@@ -766,11 +953,13 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
             ref_html = ref_analysis["scrape"].get("data", {}).get("html", "")
             ref_assets = extract_asset_candidates(ref_html, reference["url"])
             visual_brief = extract_visual_brief(ref_html, reference["url"])
+            screenshot_brief = capture_and_analyze_visuals(analysis_dir, f"reference-{index:02d}-{slug}", reference["url"])
             payload = {
                 "reference": reference,
                 "analysis": ref_analysis,
                 "asset_candidates": ref_assets,
                 "visual_brief": visual_brief,
+                "screenshot_brief": screenshot_brief,
             }
             output_file = analysis_dir / f"reference-{index:02d}-{slug}.json"
             output_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -782,6 +971,7 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
                     "summary": ref_analysis["summary"],
                     "asset_candidates": ref_assets,
                     "visual_brief": visual_brief,
+                    "screenshot_brief": screenshot_brief,
                 }
             )
         except Exception as exc:
@@ -847,10 +1037,15 @@ def build_prompt_parts(request: dict, job_dir: Path) -> tuple[dict, list[str]]:
     business_profile = source_context.get("business_profile", {})
     limits = profile_limits(request["generator_profile"])
     source_assets = source.get("asset_candidates", []) or []
+    source_visuals = source.get("visuals", {}) if isinstance(source, dict) else {}
+    source_desktop_visual = source_visuals.get("visual_summary", {}).get("desktop", {}) or {}
 
     ref_lines = []
     for item in ref_contexts:
         visual = item.get("visual_brief", {}) or {}
+        screenshot_brief = item.get("screenshot_brief", {}) or {}
+        desktop_visual = screenshot_brief.get("visual_summary", {}).get("desktop", {}) or {}
+        mobile_visual = screenshot_brief.get("visual_summary", {}).get("mobile", {}) or {}
         visual_lines = []
         if visual.get("fonts"):
             visual_lines.append(f"  Fonts: {', '.join(visual['fonts'][:4])}")
@@ -862,6 +1057,18 @@ def build_prompt_parts(request: dict, job_dir: Path) -> tuple[dict, list[str]]:
             visual_lines.append(
                 f"  Structure cues: sections={visual.get('section_count', 0)}, images={visual.get('image_count', 0)}, headings={visual.get('heading_count', 0)}, nav={visual.get('nav_present', False)}"
             )
+        if desktop_visual:
+            visual_lines.append(
+                f"  Desktop snapshot: brightness={desktop_visual.get('brightness_mode', 'unknown')}, contrast={desktop_visual.get('contrast_level', 'unknown')}, saturation={desktop_visual.get('saturation_level', 'unknown')}, palette={', '.join(desktop_visual.get('palette', [])[:5]) or 'none'}, bands={desktop_visual.get('section_bands', 0)}"
+            )
+            if desktop_visual.get("mood_signals"):
+                visual_lines.append(f"  Desktop mood: {', '.join(desktop_visual.get('mood_signals', [])[:5])}")
+        if mobile_visual:
+            visual_lines.append(
+                f"  Mobile snapshot: brightness={mobile_visual.get('brightness_mode', 'unknown')}, contrast={mobile_visual.get('contrast_level', 'unknown')}, saturation={mobile_visual.get('saturation_level', 'unknown')}, palette={', '.join(mobile_visual.get('palette', [])[:5]) or 'none'}, bands={mobile_visual.get('section_bands', 0)}"
+            )
+            if mobile_visual.get("mood_signals"):
+                visual_lines.append(f"  Mobile mood: {', '.join(mobile_visual.get('mood_signals', [])[:5])}")
         if item.get("summary"):
             summary = item["summary"]
             ref_lines.append(
@@ -940,6 +1147,12 @@ Skill directives:
 {truncate_text(source_summary.get('markdown_excerpt', '') or 'No Firecrawl summary captured.', limits['source_chars'])}
 - Important discovered links:
 {chr(10).join(f"  - {link}" for link in source_summary.get('top_links', [])[:limits['links']]) or '  - None'}
+- Source visual cues:
+  - brightness={source_desktop_visual.get('brightness_mode', 'unknown') if isinstance(source_desktop_visual, dict) else 'unknown'}
+  - contrast={source_desktop_visual.get('contrast_level', 'unknown') if isinstance(source_desktop_visual, dict) else 'unknown'}
+  - saturation={source_desktop_visual.get('saturation_level', 'unknown') if isinstance(source_desktop_visual, dict) else 'unknown'}
+  - palette={', '.join(source_desktop_visual.get('palette', [])[:5]) if isinstance(source_desktop_visual, dict) and source_desktop_visual.get('palette') else 'none'}
+  - mood={', '.join(source_desktop_visual.get('mood_signals', [])[:5]) if isinstance(source_desktop_visual, dict) and source_desktop_visual.get('mood_signals') else 'none'}
 """
 
     reference_block = "Design references:\n" + ("\n".join(ref_lines) if ref_lines else "- None supplied")
@@ -965,6 +1178,7 @@ Skill directives:
 - Use the design references for layout, typography, spacing, rhythm, and visual tone, but do not copy branding directly.
 - Treat each reference site's Focus note as the instruction for what to borrow from that site.
 - Match the dominant reference site's visual system deliberately: typography feel, spacing scale, image density, and section cadence should be recognizably inspired by it.
+- Use the screenshot-derived visual cues from the reference to shape the page mood, visual density, and pacing, not just the reference text summary.
 - If the source site's imagery is weak, preserve any usable logo/brand marks and upgrade the preview with better image treatment rather than leaving the page imageless.
 - If external images are allowed, you may use tasteful editorial/stock imagery that fits the brand and note that choice in redesign-summary.md.
 - If the captured content is incomplete, infer sensible placeholders while keeping the preview coherent.
@@ -1314,6 +1528,31 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json({"error": "prompt parts not found"}, status=404)
                     return
                 self._send_file(prompt_parts_path, "application/json; charset=utf-8")
+                return
+            if len(parts) >= 4 and parts[2] == "artifacts":
+                job_id = parts[1]
+                job_root = job_dir_path(job_id)
+                if not job_root.exists():
+                    self._send_json({"error": "job not found"}, status=404)
+                    return
+                relative = Path(unquote("/".join(parts[3:]))).as_posix().lstrip("/")
+                artifact_path = (job_root / relative).resolve()
+                if not str(artifact_path).startswith(str(job_root.resolve())):
+                    self._send_json({"error": "invalid artifact path"}, status=400)
+                    return
+                if not artifact_path.exists() or not artifact_path.is_file():
+                    self._send_json({"error": "artifact not found"}, status=404)
+                    return
+                content_types = {
+                    ".json": "application/json; charset=utf-8",
+                    ".txt": "text/plain; charset=utf-8",
+                    ".md": "text/markdown; charset=utf-8",
+                    ".png": "image/png",
+                    ".jpg": "image/jpeg",
+                    ".jpeg": "image/jpeg",
+                    ".webp": "image/webp",
+                }
+                self._send_file(artifact_path, content_types.get(artifact_path.suffix.lower(), "application/octet-stream"))
                 return
 
             job_id = parts[1]

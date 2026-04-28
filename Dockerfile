@@ -2,7 +2,11 @@ FROM nikolaik/python-nodejs:python3.11-nodejs22
 
 WORKDIR /app
 
-RUN npm install -g opencode-ai@latest
+COPY requirements.txt /app/requirements.txt
+
+RUN pip install --no-cache-dir -r /app/requirements.txt
+RUN npm install -g opencode-ai@latest playwright@latest
+RUN playwright install --with-deps chromium
 
 COPY app /app/app
 COPY skills /app/skills

@@ -20,6 +20,7 @@ Git-backed runner for AI website redesign jobs.
 - `GET /jobs/<job_id>`
 - `GET /jobs/<job_id>/prompt`
 - `GET /jobs/<job_id>/prompt-parts`
+- `GET /jobs/<job_id>/artifacts/<path>`
 - `GET /preview/<client-slug>/`
 
 ## Request shape
@@ -79,6 +80,7 @@ For prompt inspection:
 
 - `GET /jobs/<job_id>/prompt` returns the final prompt string
 - `GET /jobs/<job_id>/prompt-parts` returns the structured prompt sections used to build it
+- `GET /jobs/<job_id>/artifacts/<path>` exposes generated screenshots, analysis JSON, and logs for operator review
 
 This is enough to iterate without a dashboard at first. A dashboard becomes useful once you want saved presets, prompt/version history, and one-click reruns.
 
@@ -103,10 +105,12 @@ This makes the design system tunable without changing Python code:
 - the runner uses Firecrawl to scrape the source site into markdown + HTML
 - it also scrapes the first few reference sites so the prompt includes their actual structure and tone, not just their URLs
 - each reference can include a `focus` field describing what the model should borrow from that site
-- each reference now also gets a derived visual brief from its HTML/CSS: likely fonts, palette cues, image density, spacing/mood signals, and structure hints
+- the runner now captures desktop and mobile screenshots for the source site and references, then derives a visual brief from those images
+- each reference now gets a stronger visual brief: palette cues, brightness/contrast, saturation, section rhythm, image density, and mood signals
 - the runner extracts source and reference asset candidates so the model can reuse logos/photos when helpful instead of returning imageless redesigns
 - the runner scores source completeness and, when needed, uses Firecrawl search to enrich weak websites with external business context
 - the runner writes `/jobs/<job_id>/source/analysis/business-profile.json` so prompts can use compact structured facts instead of raw scrape dumps
+- screenshot and visual-analysis artifacts are stored per job under `/data/jobs/<job_id>/source/analysis/`
 - if Firecrawl is unavailable for the source site, the runner falls back to a direct HTML fetch so jobs still run
 - for Docker/Coolify deploys, set `WEBSITE_REDESIGN_FIRECRAWL_URL` to the reachable Firecrawl endpoint from inside the container
 
