@@ -45,6 +45,8 @@ Git-backed runner for AI website redesign jobs.
   "image_strategy": "hybrid",
   "reuse_source_images": true,
   "allow_external_images": true,
+  "impeccable_critique": true,
+  "impeccable_autofix": true,
   "design_goal": "Luxury redesign that feels expensive and cinematic.",
   "brand_notes": "Premium editorial redesign with stronger reservation CTA.",
   "enabled_skills": [
@@ -70,6 +72,8 @@ The runner now exposes the main operator levers directly in the job payload:
 - `image_strategy`: `source-only`, `source-first`, `hybrid`, or `stock-first`
 - `reuse_source_images`: whether to keep using source imagery when it is good enough
 - `allow_external_images`: whether the model may upgrade weak photography with external/editorial imagery
+- `impeccable_critique`: run the Impeccable detector on generated `dist/`
+- `impeccable_autofix`: if Impeccable finds issues, run a short targeted refinement pass
 - `source_expansion_mode`: `strict`, `balanced`, or `aggressive`
 - `search_enrichment`: enable or disable external search fallback
 - `search_budget`: max number of external enrichment results to merge
@@ -80,6 +84,7 @@ For prompt inspection:
 
 - `GET /jobs/<job_id>/prompt` returns the final prompt string
 - `GET /jobs/<job_id>/prompt-parts` returns the structured prompt sections used to build it
+- `GET /jobs/<job_id>/artifacts/prompt.metrics.json` exposes a per-part token estimate and audit suggestions
 - `GET /jobs/<job_id>/artifacts/<path>` exposes generated screenshots, analysis JSON, and logs for operator review
 
 This is enough to iterate without a dashboard at first. A dashboard becomes useful once you want saved presets, prompt/version history, and one-click reruns.
@@ -111,6 +116,8 @@ This makes the design system tunable without changing Python code:
 - the runner scores source completeness and, when needed, uses Firecrawl search to enrich weak websites with external business context
 - the runner writes `/jobs/<job_id>/source/analysis/business-profile.json` so prompts can use compact structured facts instead of raw scrape dumps
 - screenshot and visual-analysis artifacts are stored per job under `/data/jobs/<job_id>/source/analysis/`
+- the runner now writes `/jobs/<job_id>/prompt.metrics.json` so you can see estimated token spend by prompt section
+- after generation, the runner can run `impeccable detect --json dist/` and optionally launch a compact repair pass against only the generated preview files
 - if Firecrawl is unavailable for the source site, the runner falls back to a direct HTML fetch so jobs still run
 - for Docker/Coolify deploys, set `WEBSITE_REDESIGN_FIRECRAWL_URL` to the reachable Firecrawl endpoint from inside the container
 

@@ -29,6 +29,10 @@ FIRECRAWL_URL = os.environ.get("WEBSITE_REDESIGN_FIRECRAWL_URL", "http://127.0.0
 MAX_REFERENCE_SITES = int(os.environ.get("WEBSITE_REDESIGN_MAX_REFERENCE_SITES", "3"))
 FIRECRAWL_SCRAPE_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_FIRECRAWL_TIMEOUT", "90"))
 SCREENSHOT_CAPTURE_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_SCREENSHOT_TIMEOUT", "120"))
+IMPECCABLE_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_TIMEOUT", "180"))
+DEFAULT_IMPECCABLE_CRITIQUE = os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_CRITIQUE", "true")
+DEFAULT_IMPECCABLE_AUTOFIX = os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_AUTOFIX", "true")
+IMPECCABLE_MAX_FINDINGS = int(os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_MAX_FINDINGS", "8"))
 ALLOWED_GENERATOR_PROFILES = {"lean", "balanced", "quality"}
 ALLOWED_IMAGE_STRATEGIES = {"source-only", "source-first", "hybrid", "stock-first"}
 ALLOWED_SOURCE_EXPANSION_MODES = {"strict", "balanced", "aggressive"}
@@ -483,6 +487,8 @@ def normalize_request(payload: dict) -> dict:
         "source_expansion_mode": source_expansion_mode,
         "search_enrichment": parse_bool(payload.get("search_enrichment"), True),
         "search_budget": search_budget,
+        "impeccable_critique": parse_bool(payload.get("impeccable_critique"), parse_bool(DEFAULT_IMPECCABLE_CRITIQUE, True)),
+        "impeccable_autofix": parse_bool(payload.get("impeccable_autofix"), parse_bool(DEFAULT_IMPECCABLE_AUTOFIX, True)),
     }
 
 
@@ -988,10 +994,10 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
 
 def profile_limits(profile: str) -> dict:
     if profile == "lean":
-        return {"source_chars": 520, "reference_chars": 220, "links": 4, "assets": 4, "enrichment_chars": 180}
+        return {"source_chars": 420, "reference_chars": 140, "links": 4, "assets": 4, "enrichment_chars": 120}
     if profile == "quality":
-        return {"source_chars": 900, "reference_chars": 420, "links": 8, "assets": 8, "enrichment_chars": 240}
-    return {"source_chars": 700, "reference_chars": 320, "links": 6, "assets": 6, "enrichment_chars": 200}
+        return {"source_chars": 700, "reference_chars": 220, "links": 8, "assets": 8, "enrichment_chars": 180}
+    return {"source_chars": 560, "reference_chars": 180, "links": 6, "assets": 6, "enrichment_chars": 150}
 
 
 def render_asset_guidance(request: dict, source_assets: list[dict]) -> str:
@@ -1071,6 +1077,9 @@ def build_prompt_parts(request: dict, job_dir: Path) -> tuple[dict, list[str]]:
                 visual_lines.append(f"  Mobile mood: {', '.join(mobile_visual.get('mood_signals', [])[:5])}")
         if item.get("summary"):
             summary = item["summary"]
+            reference_chars_limit = limits["reference_chars"]
+            if desktop_visual or mobile_visual:
+                reference_chars_limit = min(reference_chars_limit, 160)
             ref_lines.append(
                 "\n".join(
                     [
@@ -1078,7 +1087,7 @@ def build_prompt_parts(request: dict, job_dir: Path) -> tuple[dict, list[str]]:
                         f"  Focus: {item.get('focus') or 'General visual direction'}",
                         f"  Title: {summary.get('title', '')}",
                         *visual_lines,
-                        f"  Content notes: {truncate_text(summary.get('markdown_excerpt', ''), limits['reference_chars'])}",
+                        f"  Content notes: {truncate_text(summary.get('markdown_excerpt', ''), reference_chars_limit)}",
                     ]
                 )
             )
@@ -1143,8 +1152,8 @@ Skill directives:
 - Completeness score: {source.get('completeness', {}).get('score', 0.0):.2f}
 - Completeness notes:
 {chr(10).join(f"  - {item}" for item in source.get('completeness', {}).get('reasons', [])) or '  - None'}
-- Source summary:
-{truncate_text(source_summary.get('markdown_excerpt', '') or 'No Firecrawl summary captured.', limits['source_chars'])}
+    - Source summary:
+{truncate_text(source_summary.get('markdown_excerpt', '') or 'No Firecrawl summary captured.', min(limits['source_chars'], 500 if source.get('completeness', {}).get('score', 0.0) >= 0.7 else limits['source_chars']))}
 - Important discovered links:
 {chr(10).join(f"  - {link}" for link in source_summary.get('top_links', [])[:limits['links']]) or '  - None'}
 - Source visual cues:
@@ -1198,10 +1207,48 @@ Skill directives:
     return parts, skill_names
 
 
+def estimate_tokens(text: str) -> int:
+    return max(1, round(len(text) / 4))
+
+
+def write_prompt_diagnostics(job_dir: Path, parts: dict, request: dict) -> dict:
+    per_part = {}
+    total_chars = 0
+    total_tokens = 0
+    for name, value in parts.items():
+        chars = len(value)
+        tokens = estimate_tokens(value)
+        per_part[name] = {"chars": chars, "estimated_tokens": tokens}
+        total_chars += chars
+        total_tokens += tokens
+
+    suggestions: list[str] = []
+    if per_part.get("reference_context", {}).get("estimated_tokens", 0) > 450:
+        suggestions.append("Reduce `reference_limit` or tighten reference content notes further.")
+    if per_part.get("external_enrichment", {}).get("estimated_tokens", 0) > 220:
+        suggestions.append("Lower `search_budget` or disable enrichment when source completeness is already high.")
+    if per_part.get("source_context", {}).get("estimated_tokens", 0) > 320:
+        suggestions.append("Trim source summary further or summarize key facts before prompt assembly.")
+    if total_tokens > 1800:
+        suggestions.append("Use `generator_profile=balanced` or `lean` for cheaper iterations.")
+    if request.get("impeccable_autofix", True):
+        suggestions.append("Keep the Impeccable refinement prompt short so the second pass stays cheap.")
+
+    report = {
+        "total_chars": total_chars,
+        "estimated_tokens": total_tokens,
+        "parts": per_part,
+        "suggestions": suggestions,
+    }
+    (job_dir / "prompt.metrics.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    return report
+
+
 def build_prompt(request: dict, job_dir: Path) -> tuple[str, list[str]]:
     parts, skill_names = build_prompt_parts(request, job_dir)
     prompt = "\n\n".join(parts.values())
     (job_dir / "prompt.parts.json").write_text(json.dumps(parts, indent=2), encoding="utf-8")
+    write_prompt_diagnostics(job_dir, parts, request)
     return prompt, skill_names
 
 
@@ -1321,6 +1368,101 @@ def run_opencode_redesign(job_dir: Path, request: dict) -> dict:
     }
 
 
+def parse_impeccable_json(output: str) -> list[dict]:
+    output = (output or "").strip()
+    if not output:
+        return []
+    try:
+        data = json.loads(output)
+    except Exception:
+        return []
+    return data if isinstance(data, list) else []
+
+
+def run_impeccable_detect(job_dir: Path) -> dict:
+    executable = shutil.which("impeccable")
+    if executable:
+        cmd = [executable, "detect", "--json", "dist"]
+    else:
+        cmd = ["npx", "-y", "impeccable", "detect", "--json", "dist"]
+    result = run_command(cmd, cwd=job_dir, timeout=IMPECCABLE_TIMEOUT)
+    log_path = job_dir / "impeccable.log"
+    log_path.write_text(
+        f"exit_code={result.returncode}\n\nSTDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}\n",
+        encoding="utf-8",
+    )
+    findings = parse_impeccable_json(result.stdout) or parse_impeccable_json(result.stderr)
+    report = {
+        "exit_code": result.returncode,
+        "log": str(log_path),
+        "findings_count": len(findings),
+        "findings": findings,
+        "status": "clean" if result.returncode == 0 else ("findings" if result.returncode == 2 else "error"),
+    }
+    (job_dir / "impeccable.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    return report
+
+
+def format_impeccable_finding(item: dict) -> str:
+    antipattern = item.get("antipattern") or item.get("rule") or "issue"
+    file_name = item.get("file") or item.get("path") or "unknown file"
+    line = item.get("line")
+    message = item.get("message") or item.get("description") or item.get("reason") or ""
+    suggestion = item.get("suggestion") or item.get("fix") or ""
+    location = f"{file_name}:{line}" if line else file_name
+    text = f"- [{antipattern}] {location}"
+    if message:
+        text += f" — {message}"
+    if suggestion:
+        text += f" | fix: {suggestion}"
+    return text
+
+
+def run_impeccable_refinement(job_dir: Path, request: dict, critique: dict) -> dict:
+    findings = critique.get("findings", [])[:IMPECCABLE_MAX_FINDINGS]
+    findings_block = "\n".join(format_impeccable_finding(item) for item in findings) or "- No findings provided"
+    prompt = f"""You are running a targeted post-generation refinement pass on an existing static site in ./dist.
+
+Edit only files inside ./dist and ./dist/redesign-summary.md.
+Do not rebuild from scratch. Preserve the current concept, business identity, and overall layout unless a finding requires adjustment.
+
+Fix these Impeccable findings:
+{findings_block}
+
+Requirements:
+- Prioritize accessibility, typography quality, visual hierarchy, spacing rhythm, and anti-generic design issues.
+- Keep the existing reference-led mood intact.
+- Make the smallest set of edits that materially improves the result.
+- Append a short 'Impeccable refinement' note to ./dist/redesign-summary.md describing what changed.
+"""
+    prompt_file = job_dir / "impeccable-refinement-prompt.txt"
+    prompt_file.write_text(prompt, encoding="utf-8")
+    local_config_path = build_local_opencode_config(job_dir)
+    env = os.environ.copy()
+    env["OPENCODE_CONFIG"] = str(local_config_path)
+    cmd = [
+        "opencode",
+        "run",
+        prompt,
+        "--model",
+        MODEL,
+        "--dir",
+        str(job_dir),
+    ]
+    result = run_command(cmd, cwd=job_dir, env=env, timeout=3600)
+    log_path = job_dir / "impeccable-refinement.log"
+    log_path.write_text(
+        f"exit_code={result.returncode}\n\nSTDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}\n",
+        encoding="utf-8",
+    )
+    return {
+        "exit_code": result.returncode,
+        "log": str(log_path),
+        "prompt": str(prompt_file),
+        "findings_used": len(findings),
+    }
+
+
 def publish_preview(job_dir: Path, slug: str) -> str:
     dist = job_dir / "dist"
     if not dist.exists() or not (dist / "index.html").exists():
@@ -1416,11 +1558,28 @@ def process_job(job_id: str, request: dict) -> None:
             if opencode_result["exit_code"] != 0:
                 raise RuntimeError(f"OpenCode exited with code {opencode_result['exit_code']}")
 
+        critique_result = None
+        if not request["dry_run"] and request.get("impeccable_critique", True):
+            update_state(job_id, step="running-impeccable")
+            try:
+                critique_result = run_impeccable_detect(job_dir)
+                if critique_result.get("status") == "findings" and request.get("impeccable_autofix", True):
+                    update_state(job_id, step="running-impeccable-refinement", impeccable=critique_result)
+                    refinement = run_impeccable_refinement(job_dir, request, critique_result)
+                    critique_result["refinement"] = refinement
+                    if refinement.get("exit_code") == 0:
+                        critique_result["post_refinement"] = run_impeccable_detect(job_dir)
+                update_state(job_id, impeccable=critique_result)
+            except Exception as exc:
+                critique_result = {"status": "error", "error": str(exc)}
+                update_state(job_id, impeccable=critique_result)
+
         update_state(
             job_id,
             step="publishing-preview",
             opencode=opencode_result,
             applied_skills=opencode_result.get("applied_skills", []),
+            impeccable=critique_result,
         )
         preview_url = publish_preview(job_dir, request["client_slug"])
         update_state(
