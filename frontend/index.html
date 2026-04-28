@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WebRedesign — AI-powered website redesign</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+
+<!-- ═══ Navigation ═══ -->
+<nav class="nav" id="nav">
+  <a href="/" class="nav-brand" onclick="router.go('/'); return false">
+    <span>◆</span> WebRedesign
+  </a>
+  <div class="nav-links" id="nav-links"></div>
+</nav>
+
+<!-- ═══ View: Loading ═══ -->
+<div id="view-loading" class="page" style="text-align:center;padding:80px 24px">
+  <div class="spinner" style="margin:0 auto 16px"></div>
+  <p>Loading...</p>
+</div>
+
+<!-- ═══ View: Landing ═══ -->
+<div id="view-landing" class="hidden">
+  <div class="hero">
+    <h1>Your website,<br><span style="color:var(--accent)">reimagined</span></h1>
+    <p>Enter a URL. We analyze, redesign, and deliver a premium static site — ready in minutes. Tweak it with prompts, host it with us, or export the code.</p>
+    <div class="hero-actions">
+      <button class="btn btn-primary btn-lg" onclick="router.go('/login')">Try it free</button>
+      <button class="btn btn-secondary btn-lg" onclick="document.getElementById('demo-input').focus()">See how it works ↓</button>
+    </div>
+  </div>
+
+  <div class="page section">
+    <div class="card" style="max-width:600px;margin:0 auto;text-align:center;padding:32px">
+      <p style="margin-bottom:12px;color:var(--text-dim)">Enter any website URL for a preview</p>
+      <div class="input-group">
+        <input id="demo-input" class="input" placeholder="https://example.com" onkeydown="if(event.key==='Enter')demoRedesign()">
+      </div>
+      <button class="btn btn-primary" style="margin-top:12px;width:100%" onclick="demoRedesign()">
+        Generate redesign preview →
+      </button>
+    </div>
+  </div>
+
+  <div class="page section">
+    <div class="grid-3">
+      <div class="card" style="text-align:center;padding:32px">
+        <div class="feature-icon" style="margin:0 auto 12px">🎨</div>
+        <h3 style="margin-bottom:8px">AI-Powered Redesign</h3>
+        <p>Enter any URL — we scrape, analyze, and generate a premium redesign using state-of-the-art AI.</p>
+      </div>
+      <div class="card" style="text-align:center;padding:32px">
+        <div class="feature-icon" style="margin:0 auto 12px">✏️</div>
+        <h3 style="margin-bottom:8px">Prompt to Refine</h3>
+        <p>Type natural language changes. "Make the hero darker" — see the result instantly in the live preview.</p>
+      </div>
+      <div class="card" style="text-align:center;padding:32px">
+        <div class="feature-icon" style="margin:0 auto 12px">🚀</div>
+        <h3 style="margin-bottom:8px">Host or Export</h3>
+        <p>Go live on a subdomain, connect your custom domain, or download the full site ZIP.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="page section" style="padding-bottom:80px">
+    <h2 style="text-align:center;margin-bottom:40px">Simple, transparent pricing</h2>
+    <div class="grid-3" id="pricing-grid-landing"></div>
+  </div>
+</div>
+
+<!-- ═══ View: Login ═══ -->
+<div id="view-login" class="hidden">
+  <div class="page" style="max-width:440px;margin:80px auto">
+    <div class="card" style="padding:32px">
+      <h2 style="margin-bottom:8px">Sign in</h2>
+      <p style="margin-bottom:24px">Enter your email and we'll send you a magic link.</p>
+      <div class="input-group" style="margin-bottom:16px">
+        <label>Email address</label>
+        <input id="login-email" class="input" type="email" placeholder="you@example.com" autocomplete="email" onkeydown="if(event.key==='Enter')handleLogin()">
+      </div>
+      <button class="btn btn-primary" style="width:100%" onclick="handleLogin()" id="login-btn">Send magic link</button>
+      <div id="login-status" class="hidden" style="margin-top:16px;text-align:center"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ View: Verify Login ═══ -->
+<div id="view-verify" class="hidden">
+  <div class="page" style="max-width:440px;margin:80px auto">
+    <div class="card" style="padding:32px;text-align:center">
+      <div class="spinner" style="margin:0 auto 16px"></div>
+      <p>Verifying your login...</p>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ View: Dashboard ═══ -->
+<div id="view-dashboard" class="hidden">
+  <div class="page page-wide">
+    <div class="flex items-center justify-between" style="margin-bottom:24px">
+      <div>
+        <h2>Your Sites</h2>
+        <p>Manage your website redesigns</p>
+      </div>
+      <button class="btn btn-primary" onclick="showNewSiteModal()">+ New Site</button>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-grid" style="margin-bottom:32px">
+      <div class="stat-card"><div class="stat-value" id="stat-sites">0</div><div class="stat-label">Sites</div></div>
+      <div class="stat-card"><div class="stat-value" id="stat-credits">0</div><div class="stat-label">Credits</div></div>
+      <div class="stat-card"><div class="stat-value" id="stat-tier">free</div><div class="stat-label">Plan</div></div>
+    </div>
+
+    <!-- Sites list -->
+    <div id="sites-list">
+      <div class="card" style="text-align:center;padding:48px;color:var(--text-dim)">
+        No sites yet. Click "+ New Site" to start.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ View: Editor (Core Product) ═══ -->
+<div id="view-editor" class="hidden">
+  <div class="editor-layout" id="editor-layout">
+    <!-- Preview pane -->
+    <div class="editor-preview" id="editor-preview">
+      <div class="editor-placeholder" id="editor-placeholder">
+        <span>◆</span>
+        <h3 style="margin-bottom:8px">Website Preview</h3>
+        <p>Submit your first redesign to see it here.</p>
+      </div>
+      <iframe id="editor-iframe" class="hidden" style="width:100%;height:100%;border:none;background:white"></iframe>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="editor-sidebar">
+      <div class="editor-sidebar-inner">
+        <!-- Site header -->
+        <div class="flex items-center justify-between" style="padding-bottom:12px;border-bottom:1px solid var(--border)">
+          <div>
+            <div style="font-weight:600;font-size:0.95rem" id="editor-site-name">Loading...</div>
+            <div style="font-size:0.8rem;color:var(--text-dim)" id="editor-site-url"></div>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="router.go('/dashboard')">← Back</button>
+        </div>
+
+        <!-- Credit display -->
+        <div class="flex items-center justify-between" style="background:var(--bg-surface);padding:12px;border-radius:var(--radius)">
+          <div>
+            <div style="font-size:0.85rem;font-weight:500">Credits</div>
+            <div style="font-size:0.8rem;color:var(--text-dim)" id="editor-credit-text">Loading...</div>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="router.go('/billing')">Buy more</button>
+        </div>
+
+        <!-- Prompt input -->
+        <div class="prompt-area" style="flex:1">
+          <label style="font-size:0.85rem;font-weight:500;color:var(--text-muted);margin-bottom:6px;display:block">
+            Describe your change
+          </label>
+          <textarea class="input" id="editor-prompt" placeholder='e.g. "Make the hero section darker and add a CTA button"' style="min-height:100px" onkeydown="if(event.key==='Enter'&&event.metaKey)submitPrompt()"></textarea>
+          <button class="prompt-submit" id="editor-submit-btn" onclick="submitPrompt()" title="Submit (⌘+Enter)">
+            →
+          </button>
+        </div>
+
+        <!-- Job status -->
+        <div id="editor-job-status" class="hidden">
+          <div class="progress-bar"><div class="progress-bar-fill" id="editor-progress" style="width:0%"></div></div>
+          <div style="font-size:0.8rem;color:var(--text-dim);margin-top:4px" id="editor-status-text">Processing...</div>
+        </div>
+
+        <!-- Action buttons -->
+        <div class="flex gap-sm" style="flex-wrap:wrap">
+          <button class="btn btn-secondary btn-sm" onclick="publishSite()" id="btn-publish" disabled>
+            ⚡ Publish
+          </button>
+          <button class="btn btn-secondary btn-sm" onclick="exportSite()" id="btn-export" disabled>
+            ↓ Export
+          </button>
+          <button class="btn btn-secondary btn-sm" onclick="setupDomain()" id="btn-domain" disabled>
+            🌐 Domain
+          </button>
+        </div>
+
+        <!-- Version history -->
+        <div>
+          <div style="font-size:0.85rem;font-weight:500;color:var(--text-dim);margin-bottom:8px">Versions</div>
+          <div id="editor-versions">
+            <div style="font-size:0.85rem;color:var(--text-dim)">No versions yet</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ View: Billing ═══ -->
+<div id="view-billing" class="hidden">
+  <div class="page" style="max-width:900px;margin:40px auto">
+    <h2 style="margin-bottom:8px">Pricing</h2>
+    <p style="margin-bottom:32px">Choose how you want to use WebRedesign</p>
+    <div class="grid-3" id="pricing-grid-billing"></div>
+  </div>
+</div>
+
+<!-- ═══ View: Domain Setup ═══ -->
+<div id="view-domain" class="hidden">
+  <div class="page" style="max-width:700px;margin:40px auto">
+    <h2 style="margin-bottom:8px">Custom Domain</h2>
+    <p style="margin-bottom:24px">Connect your own domain to host your redesign.</p>
+
+    <!-- Steps -->
+    <div class="steps" id="domain-steps">
+      <div class="step active" id="ds-1"><div class="step-number">1</div> Enter domain</div>
+      <div class="step" id="ds-2"><div class="step-number">2</div> Check DNS</div>
+      <div class="step" id="ds-3"><div class="step-number">3</div> Update records</div>
+      <div class="step" id="ds-4"><div class="step-number">4</div> Verify &amp; deploy</div>
+    </div>
+
+    <!-- Step 1: Enter domain -->
+    <div id="domain-step-1">
+      <div class="card" style="padding:24px">
+        <div class="input-group" style="margin-bottom:16px">
+          <label>Your domain</label>
+          <input class="input" id="domain-input" placeholder="yoursite.com">
+        </div>
+        <button class="btn btn-primary" onclick="domainStep1()">Next →</button>
+      </div>
+    </div>
+
+    <!-- Step 2: DNS check (hidden until step 1) -->
+    <div id="domain-step-2" class="hidden">
+      <div class="card" style="padding:24px;margin-bottom:16px">
+        <h3 style="margin-bottom:12px">Current DNS records for <span id="domain-display"></span></h3>
+        <div id="domain-records"></div>
+        <div id="domain-warnings" class="hidden" style="margin-top:12px;padding:12px;background:var(--amber-subtle);border-radius:var(--radius);font-size:0.9rem;color:var(--amber)"></div>
+      </div>
+      <button class="btn btn-primary" onclick="domainStep2()">Continue to instructions →</button>
+    </div>
+
+    <!-- Step 3: DNS instructions (hidden) -->
+    <div id="domain-step-3" class="hidden">
+      <div class="card" style="padding:24px;margin-bottom:16px">
+        <h3 style="margin-bottom:12px">Add this DNS record</h3>
+        <p style="margin-bottom:16px">Go to your DNS provider and add:</p>
+        <div class="code-block">
+Type: A<br>
+Name: @<br>
+Value: <span id="domain-server-ip">[checking...]</span><br>
+TTL: 300 (or default)
+        </div>
+        <p style="margin-top:12px;font-size:0.85rem;color:var(--text-dim)">Also add a CNAME for www if desired.</p>
+      </div>
+      <button class="btn btn-primary" onclick="domainStep3()">I've done this — Verify →</button>
+    </div>
+
+    <!-- Step 4: Verification (hidden) -->
+    <div id="domain-step-4" class="hidden">
+      <div class="card" style="padding:24px;text-align:center">
+        <div class="spinner" style="margin:0 auto 16px" id="domain-spinner"></div>
+        <div id="domain-status-text">Checking DNS propagation...</div>
+        <div id="domain-success" class="hidden" style="margin-top:16px">
+          <div style="font-size:2rem;margin-bottom:8px">✓</div>
+          <h3 style="color:var(--green)">Domain verified!</h3>
+          <p style="margin-top:8px">Your site is now live at <strong id="domain-live-url"></strong></p>
+          <div class="divider"></div>
+          <p style="font-size:0.85rem;color:var(--text-dim)">SSL certificate is being provisioned automatically. Your site will be fully secure within 60 seconds.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ New Site Modal ═══ -->
+<div id="new-site-modal" class="modal-overlay hidden">
+  <div class="modal">
+    <div class="flex items-center justify-between" style="margin-bottom:20px">
+      <h3>New Website Redesign</h3>
+      <button class="btn btn-ghost btn-sm" onclick="closeModal('new-site-modal')">✕</button>
+    </div>
+    <div class="input-group" style="margin-bottom:16px">
+      <label>Website URL</label>
+      <input class="input" id="new-site-url" placeholder="https://example.com">
+    </div>
+    <div class="input-group" style="margin-bottom:16px">
+      <label>Site name (optional)</label>
+      <input class="input" id="new-site-name" placeholder="My Restaurant">
+    </div>
+    <div class="input-group" style="margin-bottom:24px">
+      <label>Industry</label>
+      <select class="input" id="new-site-industry">
+        <option value="general">General</option>
+        <option value="restaurant">Restaurant</option>
+        <option value="hotel">Hotel / Hospitality</option>
+        <option value="retail">Retail</option>
+        <option value="professional">Professional Services</option>
+        <option value="health">Health & Wellness</option>
+      </select>
+    </div>
+    <button class="btn btn-primary" style="width:100%" onclick="createNewSite()">
+      Create Redesign →
+    </button>
+  </div>
+</div>
+
+<!-- ═══ Toast container ═══ -->
+<div id="toast-container"></div>
+
+<script src="/js/app.js"></script>
+</body>
+</html>

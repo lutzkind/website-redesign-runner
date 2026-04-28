@@ -1,0 +1,60 @@
+# WebRedesign SaaS — Caddy configuration
+# Handles:
+#   - *.webredesign.ai wildcard subdomains (auto-SSL)
+#   - Custom domain hosting
+#   - Reverse proxy to runner (/preview/*)
+#   - Reverse proxy to saas server (/* and /api/*)
+
+# Wildcard domain — serves all user subdomains
+webredesign.ai, *.webredesign.ai {
+    # Serve static sites if they exist at /data/sites/{host}/
+    @static {
+        file /data/sites/{host}/
+    }
+    handle @static {
+        root * /data/sites/{host}/
+        file_server
+    }
+
+    # Fallback: redirect to the SaaS editor
+    handle {
+        redir https://app.webredesign.ai{uri} 302
+    }
+
+    # Auto-SSL via Let's Encrypt
+    tls admin@webredesign.ai
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+}
+
+# Main app domain — the SaaS application
+app.webredesign.ai {
+    # Proxy /preview/* to the runner
+    handle_path /preview/* {
+        reverse_proxy runner:4321
+    }
+
+    # Proxy /api/* to the SaaS server
+    handle_path /api/* {
+        reverse_proxy saas:4322
+    }
+
+    # Everything else → SaaS frontend
+    handle {
+        reverse_proxy saas:4322
+    }
+
+    tls admin@webredesign.ai
+    header {
+        Strict-Transport-Security "max-age=31536000"
+    }
+}
+
+# Custom domain hosting — added dynamically via API
+# See domain migration wizard for automated setup
