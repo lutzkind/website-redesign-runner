@@ -55,6 +55,7 @@ def resolve_public_base_url() -> str:
 
 
 PUBLIC_BASE_URL = resolve_public_base_url()
+GLOBAL_OPENCODE_CONFIG = Path(os.environ.get("OPENCODE_GLOBAL_CONFIG", "/root/.config/opencode/opencode.json"))
 
 
 def ensure_dirs() -> None:
@@ -142,6 +143,38 @@ def run_command(
         timeout=timeout,
         check=False,
     )
+
+
+def load_global_opencode_config() -> dict:
+    if not GLOBAL_OPENCODE_CONFIG.exists():
+        return {}
+    try:
+        return json.loads(GLOBAL_OPENCODE_CONFIG.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def build_local_opencode_config(job_dir: Path) -> Path:
+    global_config = load_global_opencode_config()
+    mcp_config = global_config.get("mcp", {}) if isinstance(global_config, dict) else {}
+
+    local_config: dict = {
+        "$schema": "https://opencode.ai/config.json",
+        "mcp": {},
+        "tools": {},
+    }
+
+    for server_name, server_config in mcp_config.items():
+        if not isinstance(server_config, dict):
+            continue
+        disabled = dict(server_config)
+        disabled["enabled"] = False
+        local_config["mcp"][server_name] = disabled
+        local_config["tools"][f"{server_name}_*"] = False
+
+    config_path = job_dir / "opencode.local.json"
+    config_path.write_text(json.dumps(local_config, indent=2), encoding="utf-8")
+    return config_path
 
 
 def validate_model_policy() -> None:
@@ -560,6 +593,9 @@ def run_opencode_redesign(job_dir: Path, request: dict) -> dict:
     prompt, applied_skills = build_prompt(request, job_dir)
     prompt_file = job_dir / "prompt.txt"
     prompt_file.write_text(prompt, encoding="utf-8")
+    local_config_path = build_local_opencode_config(job_dir)
+    env = os.environ.copy()
+    env["OPENCODE_CONFIG"] = str(local_config_path)
     cmd = [
         "opencode",
         "run",
@@ -569,7 +605,7 @@ def run_opencode_redesign(job_dir: Path, request: dict) -> dict:
         "--dir",
         str(job_dir),
     ]
-    result = run_command(cmd, cwd=job_dir, timeout=7200)
+    result = run_command(cmd, cwd=job_dir, env=env, timeout=7200)
     log_path = job_dir / "opencode.log"
     log_path.write_text(
         f"exit_code={result.returncode}\n\nSTDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}\n",
@@ -579,6 +615,7 @@ def run_opencode_redesign(job_dir: Path, request: dict) -> dict:
         "exit_code": result.returncode,
         "log": str(log_path),
         "applied_skills": applied_skills,
+        "opencode_config": str(local_config_path),
     }
 
 
