@@ -1,26 +1,21 @@
-FROM nikolaik/python-nodejs:python3.11-nodejs22
+FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt /app/requirements.txt
+# Minimal dependencies for the SaaS server
+RUN pip install --no-cache-dir requests
 
-RUN pip install --no-cache-dir -r /app/requirements.txt
-RUN npm install -g opencode-ai@latest playwright@latest impeccable@latest
-RUN playwright install --with-deps chromium
+COPY app/saas_schema.py /app/app/saas_schema.py
+COPY app/saas_server.py /app/app/saas_server.py
+COPY docker/entrypoint-saas.sh /app/entrypoint-saas.sh
+COPY frontend /app/frontend
 
-COPY app /app/app
-COPY skills /app/skills
-COPY docker/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint-saas.sh
 
-RUN chmod +x /app/entrypoint.sh
+EXPOSE 4322
 
-ENV WEBSITE_REDESIGN_HOST=0.0.0.0 \
-    WEBSITE_REDESIGN_PORT=4321 \
-    WEBSITE_REDESIGN_ROOT=/data \
-    WEBSITE_REDESIGN_SKILLS_DIR=/app/skills \
-    WEBSITE_REDESIGN_DEFAULT_INDUSTRY=general \
-    WEBSITE_REDESIGN_DEFAULT_SKILLS=website-audit,design-direction,layout-composer,frontend-art-direction,design-critic
+ENV SAAS_PORT=4322 \
+    SAAS_HOST=0.0.0.0 \
+    RUNNER_BASE_URL=http://runner:4321
 
-EXPOSE 4321
-
-ENTRYPOINT ["/app/entrypoint.sh"]
+ENTRYPOINT ["/app/entrypoint-saas.sh"]
