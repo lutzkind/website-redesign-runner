@@ -3,7 +3,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Minimal dependencies for the SaaS server
-RUN pip install --no-cache-dir requests
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/* && pip install --no-cache-dir requests
 
 COPY app/saas_schema.py /app/app/saas_schema.py
 COPY app/saas_server.py /app/app/saas_server.py
