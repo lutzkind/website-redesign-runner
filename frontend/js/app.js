@@ -328,11 +328,11 @@ function pricingCardMarkup(pricing, context = {}) {
 async function renderLandingPage() {
   const pricing = await loadPricing();
   const rotatingLines = [
-    "Look premium before the first call.",
-    "Keep your domain. Skip the usual mess.",
-    "Make the next step easy to trust.",
-    "Switch without technical confusion.",
-    "Turn your website into a better closer.",
+    "Look premium at first glance.",
+    "Make trust feel instant.",
+    "Keep your domain.",
+    "Skip the technical mess.",
+    "Turn more visits into calls.",
   ];
   renderLayout(`
     <main>
@@ -677,10 +677,10 @@ async function renderOfferPage(token) {
       `;
   const rotatingLines = [
     `${data.offer.company_name}, your redesign is ready.`,
-    "Open it first. Decide in private.",
-    "Keep your domain. Keep the switch simple.",
-    "Go live without a technical handoff.",
-    "If it feels right, host it for $19 a month.",
+    "Open it in private.",
+    "Keep your domain.",
+    "Skip the technical handoff.",
+    "Go live for $19 a month.",
   ];
   renderLayout(
     `

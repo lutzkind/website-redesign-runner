@@ -819,6 +819,14 @@ img {
     padding-top: 52px;
   }
 
+  .hero-title {
+    min-height: 2.8em;
+  }
+
+  .hero-rotator-shell {
+    min-height: 2.05em;
+  }
+
   .actions,
   .nav-actions {
     flex-direction: column;
