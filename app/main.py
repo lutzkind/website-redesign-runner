@@ -26,11 +26,15 @@ SKILLS_DIR = Path(os.environ.get("WEBSITE_REDESIGN_SKILLS_DIR", str(ROOT / "skil
 DEFAULT_INDUSTRY = os.environ.get("WEBSITE_REDESIGN_DEFAULT_INDUSTRY", "general")
 FIRECRAWL_URL = os.environ.get("WEBSITE_REDESIGN_FIRECRAWL_URL", "http://127.0.0.1:3092").rstrip("/")
 FIRECRAWL_SCRAPE_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_FIRECRAWL_TIMEOUT", "90"))
+SEO_AUDIT_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_SEO_AUDIT_TIMEOUT", "120"))
 IMPECCABLE_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_TIMEOUT", "180"))
+DEFAULT_SEO_CRITIQUE = os.environ.get("WEBSITE_REDESIGN_SEO_CRITIQUE", "true")
+DEFAULT_SEO_AUTOFIX = os.environ.get("WEBSITE_REDESIGN_SEO_AUTOFIX", "true")
 DEFAULT_IMPECCABLE_CRITIQUE = os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_CRITIQUE", "true")
 DEFAULT_IMPECCABLE_AUTOFIX = os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_AUTOFIX", "true")
 IMPECCABLE_MAX_FINDINGS = int(os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_MAX_FINDINGS", "8"))
 IMPECCABLE_MAX_REFINEMENT_PASSES = int(os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_MAX_REFINEMENT_PASSES", "2"))
+SEO_MAX_REFINEMENT_PASSES = int(os.environ.get("WEBSITE_REDESIGN_SEO_MAX_REFINEMENT_PASSES", "1"))
 ALLOWED_GENERATOR_PROFILES = {"lean", "balanced", "quality"}
 ALLOWED_IMAGE_STRATEGIES = {"source-only", "source-first", "hybrid", "stock-first"}
 ALLOWED_SOURCE_EXPANSION_MODES = {"strict", "balanced", "aggressive"}
@@ -471,6 +475,57 @@ def build_concept_blueprint(request: dict, business_profile: dict, source_summar
     }
 
 
+def infer_schema_type(industry: str) -> str:
+    mapping = {
+        "restaurant": "Restaurant",
+        "cafe": "CafeOrCoffeeShop",
+        "bakery": "Bakery",
+        "bar": "BarOrPub",
+        "hotel": "Hotel",
+        "spa": "DaySpa",
+        "salon": "BeautySalon",
+        "plumber": "Plumber",
+        "electrician": "Electrician",
+        "hvac": "HomeAndConstructionBusiness",
+        "contractor": "HomeAndConstructionBusiness",
+        "dentist": "Dentist",
+        "medical": "MedicalBusiness",
+        "legal": "LegalService",
+        "consulting": "ProfessionalService",
+        "retail": "Store",
+        "wellness": "HealthAndBeautyBusiness",
+        "general": "LocalBusiness",
+    }
+    return mapping.get(industry, "LocalBusiness")
+
+
+def build_seo_blueprint(request: dict, business_profile: dict, source_summary: dict, concept_blueprint: dict) -> dict:
+    business_name = business_profile.get("business_name") or source_summary.get("title", "").split("-")[0].strip() or request["hostname"]
+    location_hint = ""
+    address = business_profile.get("address", "")
+    if address:
+        location_hint = address.split(",")[-1].strip() if "," in address else address
+    headline_keywords = business_profile.get("core_highlights", [])[:4]
+    return {
+        "schema_type": infer_schema_type(request["industry"]),
+        "canonical_url": request["website_url"],
+        "title_formula": f"{business_name} | {request['industry'].replace('-', ' ').title()} in {location_hint or 'your area'}",
+        "meta_description_focus": "Lead with the offer, atmosphere or trust angle, then reinforce location and a primary CTA in 120-160 characters.",
+        "content_keywords": headline_keywords,
+        "local_signals": {
+            "business_name": business_name,
+            "address": business_profile.get("address", ""),
+            "phone": business_profile.get("phone", ""),
+            "hours": business_profile.get("hours", ""),
+            "maps_query_url": business_profile.get("maps_query_url", ""),
+        },
+        "og_image_strategy": "Use the strongest hero or branded source image as the social preview image and ensure the meta tags point to it.",
+        "heading_rule": "Use exactly one descriptive H1 and a logical H2/H3 hierarchy for major sections.",
+        "alt_text_rule": "Every non-decorative image should have descriptive alt text tied to the business, menu, service, or atmosphere.",
+        "footer_rule": concept_blueprint.get("footer_requirements", ""),
+    }
+
+
 def normalize_request(payload: dict) -> dict:
     website_url = str(payload.get("website_url", "")).strip()
     if not website_url:
@@ -531,6 +586,8 @@ def normalize_request(payload: dict) -> dict:
         "source_expansion_mode": source_expansion_mode,
         "search_enrichment": parse_bool(payload.get("search_enrichment"), True),
         "search_budget": search_budget,
+        "seo_critique": parse_bool(payload.get("seo_critique"), parse_bool(DEFAULT_SEO_CRITIQUE, True)),
+        "seo_autofix": parse_bool(payload.get("seo_autofix"), parse_bool(DEFAULT_SEO_AUTOFIX, True)),
         "impeccable_critique": parse_bool(payload.get("impeccable_critique"), parse_bool(DEFAULT_IMPECCABLE_CRITIQUE, True)),
         "impeccable_autofix": parse_bool(payload.get("impeccable_autofix"), parse_bool(DEFAULT_IMPECCABLE_AUTOFIX, True)),
     }
@@ -848,6 +905,7 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
         "business_profile": {},
         "design_engine": {},
         "concept_blueprint": {},
+        "seo_blueprint": {},
     }
 
     try:
@@ -910,9 +968,19 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
         result["design_engine"],
         source_assets,
     )
+    result["seo_blueprint"] = build_seo_blueprint(
+        request,
+        result["business_profile"],
+        source_summary,
+        result["concept_blueprint"],
+    )
     (analysis_dir / "design-engine.json").write_text(json.dumps(result["design_engine"], indent=2), encoding="utf-8")
     (analysis_dir / "concept-blueprint.json").write_text(
         json.dumps(result["concept_blueprint"], indent=2),
+        encoding="utf-8",
+    )
+    (analysis_dir / "seo-blueprint.json").write_text(
+        json.dumps(result["seo_blueprint"], indent=2),
         encoding="utf-8",
     )
 
@@ -984,6 +1052,7 @@ def build_prompt_parts(request: dict, job_dir: Path) -> tuple[dict, list[str]]:
     business_profile = source_context.get("business_profile", {})
     design_engine = source_context.get("design_engine", {})
     concept_blueprint = source_context.get("concept_blueprint", {})
+    seo_blueprint = source_context.get("seo_blueprint", {})
     limits = profile_limits(request["generator_profile"])
     source_assets = source.get("asset_candidates", []) or []
 
@@ -1037,6 +1106,18 @@ Working directives:
 - Maps link: {business_profile.get('maps_query_url', 'Unavailable')}
 - Core highlights:
 {chr(10).join(f"  - {item}" for item in business_profile.get('core_highlights', [])) or '  - None extracted'}
+"""
+
+    seo_requirements_block = f"""SEO requirements:
+- Canonical URL: {seo_blueprint.get('canonical_url', request['website_url'])}
+- Schema type: {seo_blueprint.get('schema_type', 'LocalBusiness')}
+- Title formula: {seo_blueprint.get('title_formula', '')}
+- Meta description focus: {seo_blueprint.get('meta_description_focus', '')}
+- Keywords to reinforce naturally: {summarize_value_list(seo_blueprint.get('content_keywords', []))}
+- OG image strategy: {seo_blueprint.get('og_image_strategy', '')}
+- Heading rule: {seo_blueprint.get('heading_rule', '')}
+- Alt text rule: {seo_blueprint.get('alt_text_rule', '')}
+- Footer/location rule: {seo_blueprint.get('footer_rule', '')}
 """
 
     source_context_block = f"""Source website context:
@@ -1102,6 +1183,7 @@ Working directives:
 - Do not imitate or scrape public reference websites. Create a bespoke concept from the internal design family.
 - Re-express the source business in the selected family’s typography, spacing, component language, and section rhythm.
 - The first draft should already feel art-directed and prospect-ready, not like a template adaptation.
+- The first draft must also be SEO-ready: title, description, canonical, OG/Twitter metadata, one clear H1, and valid LocalBusiness-style JSON-LD should already be present.
 - Include a real map or directions embed/link in the closing/footer area using the actual business location. Do not replace the location module with decorative imagery.
 - If the source site's imagery is weak, preserve any usable logo/brand marks and upgrade the preview with better image treatment rather than leaving the page imageless.
 - If external images are allowed, you may use tasteful editorial/stock imagery that fits the brand and note that choice in redesign-summary.md.
@@ -1114,6 +1196,7 @@ Working directives:
         "design_guardrails": design_guardrails,
         "operator_controls": operator_controls,
         "business_profile": business_profile_block,
+        "seo_requirements": seo_requirements_block,
         "source_context": source_context_block,
         "design_family": design_family_block,
         "concept_blueprint": concept_blueprint_block,
@@ -1175,12 +1258,21 @@ def create_dry_run_preview(job_dir: Path, request: dict, applied_skills: list[st
     source_context = request.get("source_context") or {}
     design_engine = source_context.get("design_engine", {})
     concept_blueprint = source_context.get("concept_blueprint", {})
+    seo_blueprint = source_context.get("seo_blueprint", {})
+    business_profile = source_context.get("business_profile", {})
     index_html = f"""<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Preview for {request["client_slug"]}</title>
+    <title>{seo_blueprint.get("title_formula") or f'Preview for {request["client_slug"]}'}</title>
+    <meta name="description" content="Dry-run preview for {business_profile.get('business_name') or request['client_slug']}." />
+    <link rel="canonical" href="{request['website_url']}" />
+    <meta property="og:title" content="{business_profile.get('business_name') or request['client_slug']}" />
+    <meta property="og:description" content="Dry-run preview placeholder for the redesigned site." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <script type="application/ld+json">{json.dumps({"@context": "https://schema.org", "@type": seo_blueprint.get("schema_type", "LocalBusiness"), "name": business_profile.get("business_name") or request["client_slug"], "url": request["website_url"]})}</script>
     <style>
       :root {{
         --bg: #110f12;
@@ -1287,6 +1379,168 @@ def run_opencode_redesign(job_dir: Path, request: dict) -> dict:
         "applied_skills": applied_skills,
         "opencode_config": str(local_config_path),
     }
+
+
+def extract_first(pattern: str, text: str, flags: int = 0) -> str:
+    match = re.search(pattern, text, flags=flags)
+    return match.group(1).strip() if match else ""
+
+
+def find_meta_content(html: str, name: str, attribute: str = "name") -> str:
+    pattern = rf"<meta[^>]+{attribute}=[\"']{re.escape(name)}[\"'][^>]+content=[\"']([^\"']*)[\"'][^>]*>"
+    return extract_first(pattern, html, flags=re.IGNORECASE)
+
+
+def extract_json_ld_blocks(html: str) -> list[str]:
+    return re.findall(
+        r"<script[^>]+type=[\"']application/ld\+json[\"'][^>]*>(.*?)</script>",
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+
+def audit_generated_seo(job_dir: Path, request: dict) -> dict:
+    index_file = job_dir / "dist" / "index.html"
+    if not index_file.exists():
+        raise RuntimeError("dist/index.html missing for SEO audit")
+
+    html = index_file.read_text(encoding="utf-8", errors="ignore")
+    source_context = request.get("source_context") or {}
+    business_profile = source_context.get("business_profile", {})
+    seo_blueprint = source_context.get("seo_blueprint", {})
+    findings: list[dict] = []
+
+    title = extract_first(r"<title>(.*?)</title>", html, flags=re.IGNORECASE | re.DOTALL)
+    if not title:
+        findings.append({"rule": "missing-title", "severity": "high", "message": "Page title tag is missing."})
+    elif not 35 <= len(title) <= 70:
+        findings.append({"rule": "title-length", "severity": "medium", "message": f"Title length is {len(title)} characters; target 35-70."})
+
+    description = find_meta_content(html, "description")
+    if not description:
+        findings.append({"rule": "missing-meta-description", "severity": "high", "message": "Meta description is missing."})
+    elif not 110 <= len(description) <= 170:
+        findings.append({"rule": "meta-description-length", "severity": "medium", "message": f"Meta description length is {len(description)} characters; target 110-170."})
+
+    canonical = extract_first(r"<link[^>]+rel=[\"']canonical[\"'][^>]+href=[\"']([^\"']+)[\"'][^>]*>", html, flags=re.IGNORECASE)
+    if not canonical:
+        findings.append({"rule": "missing-canonical", "severity": "high", "message": "Canonical link tag is missing."})
+
+    for key in ("og:title", "og:description", "og:image"):
+        if not find_meta_content(html, key, "property"):
+            findings.append({"rule": f"missing-{key.replace(':', '-')}", "severity": "medium", "message": f"{key} meta tag is missing."})
+    if not find_meta_content(html, "twitter:card"):
+        findings.append({"rule": "missing-twitter-card", "severity": "medium", "message": "twitter:card meta tag is missing."})
+
+    h1_count = len(re.findall(r"<h1\b", html, flags=re.IGNORECASE))
+    if h1_count != 1:
+        findings.append({"rule": "h1-count", "severity": "high", "message": f"Expected exactly one H1, found {h1_count}."})
+
+    img_tags = re.findall(r"<img\b[^>]*>", html, flags=re.IGNORECASE)
+    missing_alt = [tag for tag in img_tags if not re.search(r"\balt=[\"'][^\"']*[\"']", tag, flags=re.IGNORECASE)]
+    if missing_alt:
+        findings.append({"rule": "missing-image-alt", "severity": "medium", "message": f"{len(missing_alt)} image(s) are missing alt text."})
+
+    json_ld_blocks = extract_json_ld_blocks(html)
+    if not json_ld_blocks:
+        findings.append({"rule": "missing-json-ld", "severity": "high", "message": "Structured data JSON-LD block is missing."})
+    else:
+        combined = "\n".join(json_ld_blocks)
+        if seo_blueprint.get("schema_type") and seo_blueprint["schema_type"] not in combined:
+            findings.append({"rule": "schema-type", "severity": "medium", "message": f"Expected schema type {seo_blueprint['schema_type']} not found in JSON-LD."})
+        if business_profile.get("business_name") and business_profile["business_name"] not in combined:
+            findings.append({"rule": "schema-name", "severity": "medium", "message": "Business name not found in JSON-LD."})
+        if business_profile.get("phone") and business_profile["phone"] not in combined:
+            findings.append({"rule": "schema-phone", "severity": "low", "message": "Phone number missing from JSON-LD."})
+        if business_profile.get("address") and business_profile["address"] not in combined:
+            findings.append({"rule": "schema-address", "severity": "low", "message": "Address missing from JSON-LD."})
+
+    if business_profile.get("maps_query_url") and business_profile["maps_query_url"] not in html and "google.com/maps" not in html:
+        findings.append({"rule": "missing-map-link", "severity": "high", "message": "Footer/location area does not contain a real Google Maps or directions link."})
+
+    report = {
+        "status": "clean" if not findings else "findings",
+        "findings_count": len(findings),
+        "findings": findings,
+        "title": title,
+        "meta_description": description,
+        "canonical": canonical,
+    }
+    (job_dir / "seo-audit.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    return report
+
+
+def format_seo_finding(item: dict) -> str:
+    return f"- [{item.get('rule', 'issue')}] severity={item.get('severity', 'unknown')} — {item.get('message', '')}"
+
+
+def run_seo_refinement(job_dir: Path, request: dict, audit: dict) -> dict:
+    findings = audit.get("findings", [])[:10]
+    findings_block = "\n".join(format_seo_finding(item) for item in findings) or "- No SEO findings provided"
+    source_context = request.get("source_context") or {}
+    seo_blueprint = source_context.get("seo_blueprint", {})
+    business_profile = source_context.get("business_profile", {})
+    prompt = f"""You are running a targeted SEO refinement pass on an existing static site in ./dist.
+
+Edit only files inside ./dist and ./dist/redesign-summary.md.
+Do not rebuild from scratch. Preserve the current design concept and layout unless a finding requires adjustment.
+
+Fix these SEO findings:
+{findings_block}
+
+Requirements:
+- Ensure ./dist/index.html has a high-quality title tag, meta description, canonical tag, Open Graph tags, and twitter:card metadata.
+- Keep metadata aligned with this title formula: {seo_blueprint.get('title_formula', '')}
+- Use schema type {seo_blueprint.get('schema_type', 'LocalBusiness')} in a valid application/ld+json block.
+- Include real business facts where available: name={business_profile.get('business_name', '')}, address={business_profile.get('address', '')}, phone={business_profile.get('phone', '')}, hours={business_profile.get('hours', '')}.
+- Use exactly one H1 and ensure non-decorative images have meaningful alt text.
+- Ensure the footer/location area includes a real map or directions link using: {business_profile.get('maps_query_url', '') or request['website_url']}
+- Append a short 'SEO refinement' note to ./dist/redesign-summary.md describing what changed.
+"""
+    prompt_file = job_dir / "seo-refinement-prompt.txt"
+    prompt_file.write_text(prompt, encoding="utf-8")
+    local_config_path = build_local_opencode_config(job_dir)
+    env = os.environ.copy()
+    env["OPENCODE_CONFIG"] = str(local_config_path)
+    cmd = ["opencode", "run", prompt, "--model", MODEL, "--dir", str(job_dir)]
+    result = run_command(cmd, cwd=job_dir, env=env, timeout=3600)
+    log_path = job_dir / "seo-refinement.log"
+    log_path.write_text(
+        f"exit_code={result.returncode}\n\nSTDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}\n",
+        encoding="utf-8",
+    )
+    return {
+        "exit_code": result.returncode,
+        "log": str(log_path),
+        "prompt": str(prompt_file),
+        "findings_used": len(findings),
+    }
+
+
+def run_seo_pipeline(job_id: str, job_dir: Path, request: dict) -> dict:
+    audit = audit_generated_seo(job_dir, request)
+    passes: list[dict] = []
+    if audit.get("status") != "findings" or not request.get("seo_autofix", True):
+        audit["passes"] = passes
+        return audit
+
+    for pass_index in range(1, SEO_MAX_REFINEMENT_PASSES + 1):
+        update_state(job_id, step="running-seo-refinement", seo=audit)
+        refinement = run_seo_refinement(job_dir, request, audit)
+        next_audit = None
+        if refinement.get("exit_code") == 0:
+            next_audit = audit_generated_seo(job_dir, request)
+        pass_report = {"pass": pass_index, "refinement": refinement, "post_refinement": next_audit}
+        passes.append(pass_report)
+        audit["passes"] = passes
+        audit["refinement"] = refinement
+        audit["post_refinement"] = next_audit
+        if not next_audit or next_audit.get("status") != "findings":
+            break
+        audit = next_audit
+
+    audit["passes"] = passes
+    return audit
 
 
 def parse_impeccable_json(output: str) -> list[dict]:
@@ -1514,6 +1768,16 @@ def process_job(job_id: str, request: dict) -> None:
             if opencode_result["exit_code"] != 0:
                 raise RuntimeError(f"OpenCode exited with code {opencode_result['exit_code']}")
 
+        seo_result = None
+        if request.get("seo_critique", True):
+            update_state(job_id, step="running-seo")
+            try:
+                seo_result = run_seo_pipeline(job_id, job_dir, request)
+                update_state(job_id, seo=seo_result)
+            except Exception as exc:
+                seo_result = {"status": "error", "error": str(exc)}
+                update_state(job_id, seo=seo_result)
+
         critique_result = None
         if not request["dry_run"] and request.get("impeccable_critique", True):
             update_state(job_id, step="running-impeccable")
@@ -1529,6 +1793,7 @@ def process_job(job_id: str, request: dict) -> None:
             step="publishing-preview",
             opencode=opencode_result,
             applied_skills=opencode_result.get("applied_skills", []),
+            seo=seo_result,
             impeccable=critique_result,
         )
         preview_url = publish_preview(job_dir, request["client_slug"])

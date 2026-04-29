@@ -35,6 +35,8 @@ Git-backed runner for AI website redesign jobs.
   "image_strategy": "hybrid",
   "reuse_source_images": true,
   "allow_external_images": true,
+  "seo_critique": true,
+  "seo_autofix": true,
   "impeccable_critique": true,
   "impeccable_autofix": true,
   "design_goal": "Luxury redesign that feels expensive and cinematic.",
@@ -62,6 +64,8 @@ The runner now exposes the main operator levers directly in the job payload:
 - `image_strategy`: `source-only`, `source-first`, `hybrid`, or `stock-first`
 - `reuse_source_images`: whether to keep using source imagery when it is good enough
 - `allow_external_images`: whether the model may upgrade weak photography with external/editorial imagery
+- `seo_critique`: run the built-in SEO audit on generated `dist/`
+- `seo_autofix`: if the SEO audit finds issues, run a short targeted SEO refinement pass before `impeccable`
 - `impeccable_critique`: run the Impeccable detector on generated `dist/`
 - `impeccable_autofix`: if Impeccable finds issues, run a short targeted refinement pass
 - `source_expansion_mode`: `strict`, `balanced`, or `aggressive`
@@ -104,7 +108,10 @@ This makes the design system tunable without changing Python code:
 - the runner writes `/jobs/<job_id>/source/analysis/business-profile.json` so prompts can use compact structured facts instead of raw scrape dumps
 - the runner selects an internal design family and writes `/jobs/<job_id>/source/analysis/design-engine.json`
 - the runner generates a bespoke concept blueprint and writes `/jobs/<job_id>/source/analysis/concept-blueprint.json`
+- the runner generates an SEO blueprint and writes `/jobs/<job_id>/source/analysis/seo-blueprint.json`
 - the first generation pass now receives explicit anti-pattern guardrails inspired by `impeccable` before any post-generation critique runs
+- the first generation pass also receives explicit SEO requirements: title, description, canonical, Open Graph, Twitter card, heading structure, alt text, JSON-LD, and footer/location consistency
+- after generation, the runner writes `/jobs/<job_id>/seo-audit.json` and can run a compact SEO repair pass before `impeccable`
 - the runner now writes `/jobs/<job_id>/prompt.metrics.json` so you can see estimated token spend by prompt section
 - after generation, the runner can run `impeccable detect --json dist/` and optionally launch a compact repair pass against only the generated preview files
 - if Firecrawl is unavailable for the source site, the runner falls back to a direct HTML fetch so jobs still run
