@@ -8,6 +8,7 @@ const state = {
   currentOffer: null,
   pollTimer: null,
   pollJobId: null,
+  heroTimer: null,
 };
 
 const app = document.getElementById("app");
@@ -55,6 +56,10 @@ function stopPolling() {
     state.pollTimer = null;
   }
   state.pollJobId = null;
+  if (state.heroTimer) {
+    clearInterval(state.heroTimer);
+    state.heroTimer = null;
+  }
 }
 
 function routeInfo(pathname = window.location.pathname) {
@@ -125,6 +130,28 @@ function renderLayout(content, options = {}) {
       </header>
     `;
   app.innerHTML = `<div class="shell">${nav}${content}</div>`;
+}
+
+function buildHeroRotator(id, lines, prefix = "") {
+  const initial = escapeHtml(lines[0] || "");
+  const before = prefix ? `${escapeHtml(prefix)} ` : "";
+  return `${before}<span id="${id}" class="hero-rotator">${initial}</span>`;
+}
+
+function startHeroRotator(id, lines) {
+  const el = document.getElementById(id);
+  if (!el || !Array.isArray(lines) || lines.length < 2) return;
+  let index = 0;
+  state.heroTimer = setInterval(() => {
+    index = (index + 1) % lines.length;
+    el.classList.add("hero-rotator-out");
+    window.setTimeout(() => {
+      el.textContent = lines[index];
+      el.classList.remove("hero-rotator-out");
+      el.classList.add("hero-rotator-in");
+      window.setTimeout(() => el.classList.remove("hero-rotator-in"), 420);
+    }, 260);
+  }, 4200);
 }
 
 function hostedPlanMarkup(pricing, siteId = "", offerToken = "", compact = false) {
@@ -203,12 +230,18 @@ function pricingCardMarkup(pricing, context = {}) {
 
 async function renderLandingPage() {
   const pricing = await loadPricing();
+  const rotatingLines = [
+    "for owners who need a stronger first impression.",
+    "for businesses that want a simpler switch.",
+    "for people who do not want a technical project.",
+    "for teams that want premium, clear, and easy to trust.",
+  ];
   renderLayout(`
     <main>
       <section class="page hero">
         <div class="hero-copy reveal reveal-1">
           <div class="eyebrow">For busy small business owners</div>
-          <h1 class="hero-title">A premium website redesign, without learning anything technical.</h1>
+          <h1 class="hero-title">${buildHeroRotator("landing-hero-rotator", rotatingLines, "A premium website redesign")}</h1>
           <p class="lead">
             We redesign your current website into something clearer, more modern, and easier to trust.
             You keep your domain, get a simple switch path, and receive setup guidance without managing a technical project.
@@ -295,6 +328,7 @@ async function renderLandingPage() {
       </section>
     </main>
   `);
+  startHeroRotator("landing-hero-rotator", rotatingLines);
 }
 
 function renderLoginPage() {
@@ -507,13 +541,18 @@ async function renderOfferPage(token) {
   const data = await apiGet(`/offers/${token}`);
   state.currentOffer = data.offer;
   if (data.site?.current_job_id && !data.site?.preview_url) maybePollSite(data.site);
+  const rotatingLines = [
+    `for ${data.offer.company_name}.`,
+    "with a calmer, more premium first impression.",
+    "that feels easier to trust and easier to act on.",
+  ];
   renderLayout(
     `
       <main>
         <section class="page hero offer-hero">
           <div class="hero-copy reveal reveal-1">
             <div class="eyebrow">Private redesign for ${escapeHtml(data.offer.company_name)}</div>
-            <h1 class="hero-title">${escapeHtml(data.offer.headline || `A more refined website for ${data.offer.company_name}.`)}</h1>
+            <h1 class="hero-title">${buildHeroRotator("offer-hero-rotator", rotatingLines, "A more refined website")}</h1>
             <p class="lead">
               This redesign was prepared specifically for ${escapeHtml(data.offer.company_name)} as a private handoff.
               Review the new direction first, then choose whether you want the simplest hosted switch, a few more refinement rounds, or the one-off files.
@@ -586,6 +625,7 @@ async function renderOfferPage(token) {
     `,
     { hideNav: false, hideFreeCta: true }
   );
+  startHeroRotator("offer-hero-rotator", rotatingLines);
 }
 
 async function renderRoute() {

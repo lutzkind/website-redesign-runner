@@ -140,6 +140,7 @@ img {
 .hero-title {
   font-size: clamp(3.1rem, 8vw, 5.4rem);
   margin: 0 0 18px;
+  min-height: 2.8em;
 }
 
 .section-title {
@@ -150,7 +151,8 @@ img {
 .lead {
   color: var(--ink-soft);
   max-width: 60ch;
-  font-size: 1.05rem;
+  font-size: 1.06rem;
+  line-height: 1.72;
 }
 
 .hero-note {
@@ -178,6 +180,9 @@ img {
 
 .hero-panel {
   box-shadow: var(--shadow-soft);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(252, 250, 248, 0.96)),
+    var(--paper-bright);
 }
 
 .section {
@@ -192,6 +197,9 @@ img {
 
 .card {
   padding: 28px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(252, 250, 248, 0.96)),
+    var(--paper-bright);
 }
 
 .card-title {
@@ -211,6 +219,7 @@ img {
 
 .muted {
   color: var(--ink-soft);
+  max-width: 58ch;
 }
 
 .fine {
@@ -233,6 +242,7 @@ img {
   letter-spacing: 0.06em;
   font-size: 0.79rem;
   font-weight: 600;
+  border-radius: 999px;
 }
 
 .btn:hover {
@@ -401,6 +411,25 @@ img {
   letter-spacing: 0.08em;
   background: var(--accent-mist);
   color: var(--accent-deep);
+  border-radius: 999px;
+}
+
+.hero-rotator {
+  display: inline-block;
+  transition: opacity 260ms ease, transform 260ms ease, filter 260ms ease;
+  transform-origin: 50% 50%;
+}
+
+.hero-rotator-out {
+  opacity: 0;
+  transform: translateY(10px);
+  filter: blur(1px);
+}
+
+.hero-rotator-in {
+  opacity: 1;
+  transform: translateY(0);
+  filter: blur(0);
 }
 
 .hero-points,
@@ -505,6 +534,7 @@ img {
   border: 1px solid var(--paper-line);
   background: #fff;
   box-shadow: var(--shadow-lifted);
+  border-radius: var(--radius-lg);
 }
 
 .reveal {
@@ -566,6 +596,21 @@ img {
 .loading {
   color: var(--ink-faint);
   font-size: 0.92rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal,
+  .hero-rotator {
+    animation: none;
+    transition: none;
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+
+  .btn {
+    transition: none;
+  }
 }
 
 @media (max-width: 1080px) {
