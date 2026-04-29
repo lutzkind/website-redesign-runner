@@ -376,6 +376,22 @@ def site_payload(site: dict, user: dict | None = None) -> dict:
     return payload
 
 
+def fetch_runner_job_state(job_id: str) -> dict:
+    if not job_id:
+        return {}
+    state_file = JOBS_DIR / job_id / "state.json"
+    if state_file.exists():
+        try:
+            return json.loads(state_file.read_text())
+        except Exception:
+            pass
+    try:
+        with urllib.request.urlopen(f"{RUNNER_BASE_URL}/jobs/{job_id}", timeout=20) as response:
+            return json.loads(response.read().decode())
+    except Exception:
+        return {}
+
+
 def capture_preview_screenshot(site_id: int, preview_url: str):
     if not preview_url:
         return
@@ -413,12 +429,8 @@ def update_site_from_job_state(site: dict) -> dict:
     job_id = site.get("current_job_id")
     if not job_id:
         return site
-    state_file = JOBS_DIR / job_id / "state.json"
-    if not state_file.exists():
-        return site
-    try:
-        state = json.loads(state_file.read_text())
-    except Exception:
+    state = fetch_runner_job_state(job_id)
+    if not state:
         return site
     updates = {}
     preview_url = preview_url_for_public(state.get("preview_url", ""))
