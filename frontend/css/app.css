@@ -45,6 +45,9 @@ body {
   font-family: var(--font-body);
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
+  background-image:
+    radial-gradient(circle at top left, rgba(175, 47, 98, 0.08), transparent 26%),
+    linear-gradient(180deg, rgba(252, 250, 248, 0.96), rgba(247, 242, 238, 0.96));
 }
 
 a {
@@ -111,6 +114,10 @@ img {
   grid-template-columns: 1.2fr 0.8fr;
   gap: var(--space-5);
   align-items: start;
+}
+
+.hero-copy {
+  align-self: center;
 }
 
 .eyebrow {
@@ -192,6 +199,14 @@ img {
   font-style: italic;
   font-size: 1.55rem;
   margin: 0 0 10px;
+}
+
+.mini-title {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 1.85rem;
+  line-height: 1.05;
+  margin: 0;
 }
 
 .muted {
@@ -388,6 +403,30 @@ img {
   color: var(--accent-deep);
 }
 
+.hero-points,
+.offer-proof {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.yearly-reveal {
+  margin-top: 8px;
+}
+
+.yearly-reveal-card {
+  display: grid;
+  gap: 14px;
+  padding: 16px 18px;
+  border: 1px solid var(--paper-line);
+  background: linear-gradient(180deg, rgba(175, 47, 98, 0.05), rgba(255, 255, 255, 0.72));
+}
+
+.yearly-copy {
+  margin: 0;
+}
+
 .editor-shell {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 360px;
@@ -448,8 +487,16 @@ img {
   align-items: start;
 }
 
+.offer-hero {
+  align-items: center;
+}
+
 .offer-preview {
   min-height: 560px;
+}
+
+.offer-preview-shell {
+  margin-top: 24px;
 }
 
 .offer-iframe {
@@ -457,6 +504,36 @@ img {
   min-height: 560px;
   border: 1px solid var(--paper-line);
   background: #fff;
+  box-shadow: var(--shadow-lifted);
+}
+
+.reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  animation: reveal-up 680ms ease forwards;
+}
+
+.reveal-1 {
+  animation-delay: 60ms;
+}
+
+.reveal-2 {
+  animation-delay: 160ms;
+}
+
+.reveal-3 {
+  animation-delay: 260ms;
+}
+
+@keyframes reveal-up {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .helper-grid {
@@ -531,5 +608,10 @@ img {
   .nav-actions {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .hero-points,
+  .offer-proof {
+    flex-direction: column;
   }
 }

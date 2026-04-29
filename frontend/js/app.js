@@ -127,6 +127,40 @@ function renderLayout(content, options = {}) {
   app.innerHTML = `<div class="shell">${nav}${content}</div>`;
 }
 
+function hostedPlanMarkup(pricing, siteId = "", offerToken = "", compact = false) {
+  const suffix = `${siteId || "none"}-${offerToken || "none"}-${compact ? "compact" : "full"}`;
+  const revealId = `yearly-reveal-${suffix}`;
+  const triggerId = `yearly-trigger-${suffix}`;
+  return `
+    <article class="card pricing-card featured">
+      <div class="eyebrow">Hosted</div>
+      <h3 class="card-title">We keep it live for you</h3>
+      <div class="price">$${(pricing.hosted_monthly.price_cents / 100).toFixed(0)}</div>
+      <div class="price-meta">per month, cancel anytime</div>
+      <ul class="bullet-list">
+        <li>We guide the switch without technical setup on your side</li>
+        <li>You keep your existing domain</li>
+        <li>Hosting, launch steps, and setup guidance are included</li>
+      </ul>
+      <div class="actions">
+        <button class="btn btn-primary" onclick="startCheckout('hosted_monthly', '${siteId}', '${offerToken}')">Host my website for $19/mo</button>
+        <button id="${triggerId}" class="btn btn-link" data-collapsed-label="Save 20% with yearly" data-expanded-label="Hide yearly option" onclick="toggleYearlyReveal('${revealId}', '${triggerId}')">Save 20% with yearly</button>
+      </div>
+      <div id="${revealId}" class="yearly-reveal" hidden>
+        <div class="yearly-reveal-card">
+          <div>
+            <div class="eyebrow">Yearly option</div>
+            <p class="muted yearly-copy">Prefer to set it once and stop thinking about it? Choose yearly and save 20%.</p>
+          </div>
+          <div class="actions">
+            <button class="btn btn-secondary" onclick="startCheckout('hosted_yearly', '${siteId}', '${offerToken}')">$${(pricing.hosted_yearly.price_cents / 100).toFixed(0)}/year</button>
+          </div>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
 function pricingCardMarkup(pricing, context = {}) {
   const offerToken = context.offerToken || "";
   const siteId = context.siteId || "";
@@ -135,30 +169,7 @@ function pricingCardMarkup(pricing, context = {}) {
   `;
   return `
     <div class="pricing-grid">
-      <article class="card pricing-card featured">
-        <div class="eyebrow">Hosted</div>
-        <h3 class="card-title">Keep it live for you</h3>
-        <div class="price">$${(pricing.hosted_monthly.price_cents / 100).toFixed(0)}</div>
-        <div class="price-meta">per month, hosting included</div>
-        <ul class="bullet-list">
-          <li>Your redesigned site stays online for you</li>
-          <li>Custom domain support when you are ready</li>
-          <li>Simple owner-friendly dashboard</li>
-        </ul>
-        <div class="actions">${buttons("hosted_monthly", "Choose monthly", true)}</div>
-      </article>
-      <article class="card pricing-card">
-        <div class="eyebrow">Yearly</div>
-        <h3 class="card-title">Pay once, save 20%</h3>
-        <div class="price">$${(pricing.hosted_yearly.price_cents / 100).toFixed(0)}</div>
-        <div class="price-meta">per year</div>
-        <ul class="bullet-list">
-          <li>The same hosted plan, billed yearly</li>
-          <li>Best fit if you want to set it and forget it</li>
-          <li>20% cheaper than monthly billing</li>
-        </ul>
-        <div class="actions">${buttons("hosted_yearly", "Choose yearly")}</div>
-      </article>
+      ${hostedPlanMarkup(pricing, siteId, offerToken)}
       <article class="card pricing-card">
         <div class="eyebrow">Redesign credits</div>
         <h3 class="card-title">Keep refining</h3>
@@ -195,21 +206,28 @@ async function renderLandingPage() {
   renderLayout(`
     <main>
       <section class="page hero">
-        <div>
+        <div class="hero-copy reveal reveal-1">
           <div class="eyebrow">For busy small business owners</div>
-          <h1 class="hero-title">A better website, without turning you into a website project manager.</h1>
+          <h1 class="hero-title">A premium website redesign, without learning anything technical.</h1>
           <p class="lead">
-            We generate a clearer, more trustworthy redesign of your existing website and give you a private place to review it.
-            You do not need design language, a brief, or extra time.
+            We redesign your current website into something clearer, more modern, and easier to trust.
+            You keep your domain, get a simple switch path, and receive setup guidance without managing a technical project.
           </p>
           <div class="actions">
             <button class="btn btn-primary" onclick="document.getElementById('free-claim-website').focus()">Request your free redesign</button>
             <button class="btn btn-link" onclick="scrollToSection('pricing-section')">See pricing</button>
           </div>
-          <p class="hero-note">One free redesign per website and per customer connection. After that, continue with credits, hosting, or a one-off unlock.</p>
+          <div class="hero-points">
+            <span class="pill">No technical setup on your side</span>
+            <span class="pill">Your domain stays yours</span>
+            <span class="pill">Full setup guide included</span>
+          </div>
+          <p class="hero-note">One free redesign per website and per customer connection. After that, continue with hosting, extra redesign credits, or a one-off unlock.</p>
         </div>
-        <aside class="hero-panel stack">
+        <aside class="hero-panel stack reveal reveal-2">
           <div class="eyebrow">Start here</div>
+          <h2 class="mini-title">See your new version first</h2>
+          <p class="muted">Submit your current website and we will prepare a private redesign page for you.</p>
           <div id="free-claim-status"></div>
           <div class="field">
             <label class="field-label" for="free-claim-website">Your website</label>
@@ -231,48 +249,48 @@ async function renderLandingPage() {
 
       <section class="page section">
         <div class="section-grid">
-          <article class="card">
+          <article class="card reveal reveal-1">
             <div class="eyebrow">What you get</div>
-            <h2 class="card-title">A stronger first impression</h2>
-            <p class="muted">We focus on clarity, trust, contact flow, and a design that feels current without becoming trendy noise.</p>
+            <h2 class="card-title">A calmer, more credible first impression</h2>
+            <p class="muted">The redesign focuses on clarity, trust, and a more premium feel so prospects understand your business faster.</p>
           </article>
-          <article class="card">
+          <article class="card reveal reveal-2">
             <div class="eyebrow">How it works</div>
-            <h2 class="card-title">You review, not manage</h2>
-            <p class="muted">We generate the first redesign for free. If you want changes, you can keep refining it with simple written requests.</p>
+            <h2 class="card-title">You review it, we guide the switch</h2>
+            <p class="muted">You get the first redesign free, then request changes in plain language if you want to refine it further.</p>
           </article>
-          <article class="card">
-            <div class="eyebrow">Why this model</div>
-            <h2 class="card-title">No bloated agency process</h2>
-            <p class="muted">Start with something concrete instead of a long sales call, a questionnaire, and weeks of back-and-forth.</p>
+          <article class="card reveal reveal-3">
+            <div class="eyebrow">Switching</div>
+            <h2 class="card-title">Keep your domain, skip the confusion</h2>
+            <p class="muted">The goal is a simple handover path, not a fragile rebuild that leaves you figuring out hosting and DNS alone.</p>
           </article>
         </div>
       </section>
 
       <section class="page section">
         <div class="helper-grid">
-          <article class="card">
+          <article class="card reveal reveal-1">
             <div class="eyebrow">1</div>
             <h3 class="card-title">Submit your current site</h3>
             <p class="muted">We only need your website and email to start your free preview.</p>
           </article>
-          <article class="card">
+          <article class="card reveal reveal-2">
             <div class="eyebrow">2</div>
             <h3 class="card-title">Review the redesign privately</h3>
             <p class="muted">You receive a private link and can look through the redesign before committing to anything.</p>
           </article>
-          <article class="card">
+          <article class="card reveal reveal-3">
             <div class="eyebrow">3</div>
             <h3 class="card-title">Choose the path that fits</h3>
-            <p class="muted">Host it with us, buy credits for more changes, or unlock the one-off version and take it elsewhere.</p>
+            <p class="muted">Host it with us, buy more redesign rounds, or unlock the one-off version and keep the files.</p>
           </article>
         </div>
       </section>
 
-      <section class="page section" id="pricing-section">
+      <section class="page section reveal reveal-2" id="pricing-section">
         <div class="eyebrow">Pricing</div>
         <h2 class="section-title">Simple choices after the free preview.</h2>
-        <p class="lead">The hosted plan keeps your redesigned website live for you. Credits buy additional redesign rounds. One-off unlock is for owners who want the files outright.</p>
+        <p class="lead">Start with hosted at $19 per month if you want the easiest switch. Yearly only appears after choosing the hosted path. Credits are for extra redesign rounds. One-off unlock is for owners who want the files outright.</p>
         ${pricingCardMarkup(pricing)}
       </section>
     </main>
@@ -478,7 +496,7 @@ async function renderBillingPage() {
       <div>
         <div class="eyebrow">Pricing</div>
         <h1 class="section-title">Choose the next step.</h1>
-        <p class="lead">Hosting keeps the redesign live for you. Credits buy additional redesign rounds. One-off purchase unlocks the exported files.</p>
+        <p class="lead">Hosted at $19 per month is the main path if you want the simplest switch. Yearly billing appears only if you want to save 20% after choosing hosting. Credits buy additional redesign rounds. One-off purchase unlocks the exported files.</p>
       </div>
       ${pricingCardMarkup(pricing, { siteId })}
     </main>
@@ -491,31 +509,35 @@ async function renderOfferPage(token) {
   if (data.site?.current_job_id && !data.site?.preview_url) maybePollSite(data.site);
   renderLayout(
     `
-      <main class="page offer-shell">
-        <div class="offer-grid">
-          <section class="stack">
-            <div>
-              <div class="eyebrow">Private redesign for ${escapeHtml(data.offer.company_name)}</div>
-              <h1 class="hero-title">${escapeHtml(data.offer.headline || `Here is your redesigned website.`)}</h1>
-              <p class="lead">
-                This page was prepared specifically for ${escapeHtml(data.offer.company_name)}.
-                Review the redesign first, then choose whether you want us to host it, keep refining it, or unlock the files outright.
-              </p>
+      <main>
+        <section class="page hero offer-hero">
+          <div class="hero-copy reveal reveal-1">
+            <div class="eyebrow">Private redesign for ${escapeHtml(data.offer.company_name)}</div>
+            <h1 class="hero-title">${escapeHtml(data.offer.headline || `A more refined website for ${data.offer.company_name}.`)}</h1>
+            <p class="lead">
+              This redesign was prepared specifically for ${escapeHtml(data.offer.company_name)} as a private handoff.
+              Review the new direction first, then choose whether you want the simplest hosted switch, a few more refinement rounds, or the one-off files.
+            </p>
+            <div class="hero-points">
+              <span class="pill">Your domain stays yours</span>
+              <span class="pill">No technical handoff required</span>
+              <span class="pill">Setup guidance included</span>
             </div>
-            <div class="offer-preview">
-              ${
-                data.site?.preview_url
-                  ? `<iframe class="offer-iframe" src="${escapeHtml(data.site.preview_url)}"></iframe>`
-                  : `<div class="card"><p class="muted">The redesign is still rendering. Refresh this page in a minute to review it.</p></div>`
-              }
-            </div>
-          </section>
-          <aside class="offer-card stack">
-            <div class="eyebrow">Choose your path</div>
-            <p class="muted">The homepage free-offer form is disabled here because this redesign has already been prepared for your business.</p>
+            <p class="hero-note">This page replaces the generic free redesign flow because your first redesign has already been prepared.</p>
+          </div>
+          <aside class="hero-panel stack reveal reveal-2">
+            <div class="eyebrow">Your next step</div>
+            <h2 class="mini-title">A simple, guided switch</h2>
+            <p class="muted">If you want to move forward, the hosted option is the cleanest path. We keep the experience simple and owner-friendly.</p>
             <div class="stack">
               <button class="btn btn-primary" onclick="startCheckout('hosted_monthly', '${data.site?.id || ""}', '${token}')">Host this version for me</button>
-              <button class="btn btn-secondary" onclick="startCheckout('hosted_yearly', '${data.site?.id || ""}', '${token}')">Choose yearly hosting</button>
+              <button class="btn btn-link" onclick="toggleYearlyReveal('offer-yearly-reveal', 'offer-yearly-trigger')" id="offer-yearly-trigger" data-collapsed-label="Prefer yearly and save 20%?" data-expanded-label="Hide yearly option">Prefer yearly and save 20%?</button>
+              <div id="offer-yearly-reveal" class="yearly-reveal" hidden>
+                <div class="yearly-reveal-card">
+                  <p class="muted yearly-copy">Choose yearly hosting if you already know you want to keep the redesign live and save 20%.</p>
+                  <button class="btn btn-secondary" onclick="startCheckout('hosted_yearly', '${data.site?.id || ""}', '${token}')">$${(data.pricing.hosted_yearly.price_cents / 100).toFixed(0)}/year</button>
+                </div>
+              </div>
               <button class="btn btn-secondary" onclick="startCheckout('credit_pack', '${data.site?.id || ""}', '${token}')">Buy redesign credits</button>
               <button class="btn btn-secondary" onclick="startCheckout('oneoff_unlock', '${data.site?.id || ""}', '${token}')">Buy one-off unlock</button>
               <a class="btn btn-link" href="${data.pricing.migration.contact_url}">Ask about migration help</a>
@@ -526,7 +548,40 @@ async function renderOfferPage(token) {
               <button class="btn btn-link" onclick="navigate('/login')">Sign in</button>
             </div>
           </aside>
-        </div>
+        </section>
+
+        <section class="page section">
+          <div class="section-grid">
+            <article class="card reveal reveal-1">
+              <div class="eyebrow">What changed</div>
+              <h2 class="card-title">More premium, less busy</h2>
+              <p class="muted">The redesign aims to feel clearer, calmer, and more trustworthy while staying easy for your visitors to read and act on.</p>
+            </article>
+            <article class="card reveal reveal-2">
+              <div class="eyebrow">Switching</div>
+              <h2 class="card-title">No technical confusion</h2>
+              <p class="muted">If you choose hosting, the handoff stays simple. You keep your domain and receive clear setup guidance instead of a technical checklist.</p>
+            </article>
+            <article class="card reveal reveal-3">
+              <div class="eyebrow">Flexibility</div>
+              <h2 class="card-title">Continue only if it feels right</h2>
+              <p class="muted">Host it, refine it, or unlock the files. The first step is simply reviewing the redesign in private.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="page section reveal reveal-2">
+          <div class="eyebrow">Your redesign</div>
+          <h2 class="section-title">Review the handoff.</h2>
+          <p class="lead">This is the redesigned version prepared for ${escapeHtml(data.offer.company_name)}. If the preview is still rendering, refresh in a minute.</p>
+          <div class="offer-preview-shell">
+            ${
+              data.site?.preview_url
+                ? `<iframe class="offer-iframe" src="${escapeHtml(data.site.preview_url)}"></iframe>`
+                : `<div class="card"><p class="muted">The redesign is still rendering. Refresh this page in a minute to review it.</p></div>`
+            }
+          </div>
+        </section>
       </main>
     `,
     { hideNav: false, hideFreeCta: true }
@@ -618,6 +673,20 @@ async function submitFreeClaim() {
           ? "This free offer has already been used from your connection."
           : error.message;
     toast(message, "error");
+  }
+}
+
+function toggleYearlyReveal(revealId, triggerId) {
+  const reveal = document.getElementById(revealId);
+  const trigger = document.getElementById(triggerId);
+  if (!reveal) return;
+  const isHidden = reveal.hasAttribute("hidden");
+  if (isHidden) {
+    reveal.removeAttribute("hidden");
+    if (trigger) trigger.textContent = trigger.dataset.expandedLabel || "Hide yearly option";
+  } else {
+    reveal.setAttribute("hidden", "");
+    if (trigger) trigger.textContent = trigger.dataset.collapsedLabel || "Save 20% with yearly";
   }
 }
 
