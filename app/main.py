@@ -12,7 +12,7 @@ from urllib.error import HTTPError, URLError
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urljoin, urlparse
+from urllib.parse import quote_plus, unquote, urljoin, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -395,8 +395,22 @@ def select_design_family(request: dict, business_profile: dict, source_summary: 
 
     family = INDUSTRY_DEFAULT_FAMILIES.get(request["industry"], "modern-approachable")
     rationale = [f"default for industry={request['industry']}"]
+    diner_signals = (
+        "diner",
+        "family-owned",
+        "breakfast",
+        "all day breakfast",
+        "pancakes",
+        "omelette",
+        "omelet",
+        "neighborhood",
+        "comfort food",
+    )
 
-    if any(term in text for term in ("luxury", "premium", "editorial", "fine dining", "steak", "cocktail", "hotel")):
+    if request["industry"] == "restaurant" and any(term in text for term in diner_signals):
+        family = "warm-hospitality"
+        rationale.append("diner-style restaurant benefits more from warm neighborhood hospitality than luxury editorial cues")
+    elif any(term in text for term in ("luxury", "premium", "editorial", "fine dining", "steak", "cocktail", "hotel")):
         family = "editorial-luxury"
         rationale.append("language suggests premium/editorial positioning")
     elif any(term in text for term in ("warm", "cozy", "family", "neighborhood", "cafe", "bakery", "welcoming")):
@@ -453,6 +467,7 @@ def build_concept_blueprint(request: dict, business_profile: dict, source_summar
         "image_policy": image_policy,
         "asset_strength": "strong" if len(source_assets) >= 6 else ("moderate" if len(source_assets) >= 3 else "weak"),
         "content_focus": business_profile.get("core_highlights", [])[:5],
+        "footer_requirements": "Include address, hours, phone, and an actual map/embed or clear directions module tied to the real business location.",
     }
 
 
@@ -694,6 +709,7 @@ def extract_business_profile(request: dict, source_summary: dict, enrichment: di
     hours = match(r"Opening Hours\s*:\s*([^\n]+)")
     address = match(r"(\d{1,6} [^\n,]+,\s*[^\n]+)")
     business_name = source_summary.get("title", "").split("-")[0].strip() or request["hostname"]
+    maps_query_url = f"https://www.google.com/maps/search/?api=1&query={quote_plus(address)}" if address else ""
 
     highlights = []
     for phrase in (
@@ -721,6 +737,7 @@ def extract_business_profile(request: dict, source_summary: dict, enrichment: di
         "address": address,
         "phone": phone,
         "hours": hours,
+        "maps_query_url": maps_query_url,
         "core_highlights": highlights[:6],
         "source_description": source_summary.get("description", ""),
         "source_title": source_summary.get("title", ""),
@@ -904,10 +921,25 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
 
 def profile_limits(profile: str) -> dict:
     if profile == "lean":
-        return {"source_chars": 420, "links": 4, "assets": 4, "enrichment_chars": 120}
+        return {"source_chars": 260, "links": 3, "assets": 3, "enrichment_chars": 90}
     if profile == "quality":
-        return {"source_chars": 700, "links": 8, "assets": 8, "enrichment_chars": 180}
-    return {"source_chars": 560, "links": 6, "assets": 6, "enrichment_chars": 150}
+        return {"source_chars": 420, "links": 5, "assets": 4, "enrichment_chars": 140}
+    return {"source_chars": 340, "links": 4, "assets": 4, "enrichment_chars": 110}
+
+
+def render_compact_skill_directives(skill_names: list[str], industry: str) -> str:
+    lines = [
+        "- Audit the source site, preserve useful facts, and improve weak hierarchy or CTA paths.",
+        "- Establish one clear art direction before building; typography, palette, rhythm, and imagery should feel intentional.",
+        "- Recompose the page for narrative flow instead of preserving legacy ordering blindly.",
+        "- Deliver polished static HTML/CSS/JS in ./dist with strong mobile behavior and obvious conversion paths.",
+        "- Self-critique before finishing and fix any obvious generic, low-contrast, or weak-hierarchy issues.",
+    ]
+    if industry == "restaurant":
+        lines.append("- For restaurants, prioritize appetite appeal, atmosphere, reservations, hours, location confidence, and concise menu highlights.")
+    if skill_names:
+        lines.append(f"- Active skill packs: {', '.join(skill_names)}.")
+    return "\n".join(lines)
 
 
 def render_asset_guidance(request: dict, source_assets: list[dict]) -> str:
@@ -933,7 +965,7 @@ def render_asset_guidance(request: dict, source_assets: list[dict]) -> str:
     )
     candidates = "\n".join(
         f"- {item['url']} ({item.get('role', 'general')}{', alt=' + item['alt'] if item.get('alt') else ''})"
-        for item in source_assets[:8]
+        for item in source_assets[:4]
     ) or "- None detected"
     return f"""{mode}
 {external}
@@ -957,21 +989,19 @@ def build_prompt_parts(request: dict, job_dir: Path) -> tuple[dict, list[str]]:
 
     skill_files = resolve_skill_files(request)
     skill_names = [path.stem for path in skill_files]
-    skill_bundle = render_skill_bundle(skill_files)
+    compact_skill_directives = render_compact_skill_directives(skill_names, request["industry"])
 
     stable_prefix = f"""You are redesigning a client's website into a polished static preview.
 
-Follow these standing rules exactly:
-1. Build a redesigned static website preview in ./dist.
-2. Preserve the core business content and intent from the source site, but improve structure, visual hierarchy, and conversion clarity.
-3. Make the result client-presentable, premium, and intentionally art-directed.
-4. Ensure ./dist/index.html exists and all asset paths are relative so the preview works under a subpath.
-5. Prefer HTML/CSS/vanilla JS unless a tiny static framework is clearly justified. Do not require a build step for previewing.
-6. Write a concise implementation summary to ./dist/redesign-summary.md.
-7. Before finishing, verify the preview files exist in ./dist.
+Rules:
+- Build the redesigned static preview in ./dist.
+- Preserve business facts and intent from the source while improving hierarchy, clarity, and conversion.
+- Keep the result premium, art-directed, and previewable without a build step.
+- Ensure ./dist/index.html exists and all asset paths are relative.
+- Write a concise ./dist/redesign-summary.md before finishing.
 
-Skill directives:
-{skill_bundle}
+Working directives:
+{compact_skill_directives}
 """
 
     design_guardrails = """Pre-generation design guardrails:
@@ -982,6 +1012,7 @@ Skill directives:
 - Avoid uppercase for long body copy; reserve it for short labels only.
 - Avoid generic SaaS hero composition, default Tailwind landing-page stacking, and interchangeable startup polish.
 - Build the first draft from the internal design family and concept blueprint. Do not rely on copied public-site patterns.
+- Always include a real location module near the footer with address, hours, phone, and a real map/embed or directions link.
 """
 
     operator_controls = f"""Operator controls:
@@ -1003,7 +1034,7 @@ Skill directives:
 - Address: {business_profile.get('address', 'Unknown')}
 - Phone: {business_profile.get('phone', 'Unknown')}
 - Hours: {business_profile.get('hours', 'Unknown')}
-- Source description: {business_profile.get('source_description', '')}
+- Maps link: {business_profile.get('maps_query_url', 'Unavailable')}
 - Core highlights:
 {chr(10).join(f"  - {item}" for item in business_profile.get('core_highlights', [])) or '  - None extracted'}
 """
@@ -1016,7 +1047,7 @@ Skill directives:
 - Completeness notes:
 {chr(10).join(f"  - {item}" for item in source.get('completeness', {}).get('reasons', [])) or '  - None'}
 - Source summary:
-{truncate_text(source_summary.get('markdown_excerpt', '') or 'No Firecrawl summary captured.', min(limits['source_chars'], 500 if source.get('completeness', {}).get('score', 0.0) >= 0.7 else limits['source_chars']))}
+{truncate_text(source_summary.get('markdown_excerpt', '') or 'No Firecrawl summary captured.', limits['source_chars'])}
 - Important discovered links:
 {chr(10).join(f"  - {link}" for link in source_summary.get('top_links', [])[:limits['links']]) or '  - None'}
 - Source asset strength: {concept_blueprint.get('asset_strength', 'unknown')}
@@ -1037,15 +1068,13 @@ Skill directives:
 
     concept_blueprint_block = f"""Concept blueprint:
 - Creative thesis: {concept_blueprint.get('creative_thesis', '')}
-- Family summary: {concept_blueprint.get('family_summary', '')}
 - Typography system: {concept_blueprint.get('typography_system', '')}
 - Color logic: {concept_blueprint.get('color_logic', '')}
 - Layout system: {concept_blueprint.get('layout_system', '')}
 - Component language: {concept_blueprint.get('component_language', '')}
-- Motion policy: {concept_blueprint.get('motion_policy', '')}
-- Image policy: {concept_blueprint.get('image_policy', '')}
 - Conversion priorities: {summarize_value_list(concept_blueprint.get('conversion_priority', []))}
 - Content focus: {summarize_value_list(concept_blueprint.get('content_focus', []))}
+- Footer requirement: {concept_blueprint.get('footer_requirements', '')}
 - Section flow:
 {chr(10).join(f"  - {item}" for item in concept_blueprint.get('section_flow', [])) or '  - None defined'}
 """
@@ -1073,6 +1102,7 @@ Skill directives:
 - Do not imitate or scrape public reference websites. Create a bespoke concept from the internal design family.
 - Re-express the source business in the selected family’s typography, spacing, component language, and section rhythm.
 - The first draft should already feel art-directed and prospect-ready, not like a template adaptation.
+- Include a real map or directions embed/link in the closing/footer area using the actual business location. Do not replace the location module with decorative imagery.
 - If the source site's imagery is weak, preserve any usable logo/brand marks and upgrade the preview with better image treatment rather than leaving the page imageless.
 - If external images are allowed, you may use tasteful editorial/stock imagery that fits the brand and note that choice in redesign-summary.md.
 - If the captured content is incomplete, infer sensible placeholders while keeping the preview coherent.
@@ -1117,7 +1147,7 @@ def write_prompt_diagnostics(job_dir: Path, parts: dict, request: dict) -> dict:
     if per_part.get("source_context", {}).get("estimated_tokens", 0) > 320:
         suggestions.append("Trim source summary further or summarize key facts before prompt assembly.")
     if total_tokens > 1800:
-        suggestions.append("Use `generator_profile=balanced` or `lean` for cheaper iterations.")
+        suggestions.append("Reduce standing prompt prose further; the current prompt is still heavy enough to slow first-pass generation.")
     if request.get("impeccable_autofix", True):
         suggestions.append("Keep the Impeccable refinement prompt short so the second pass stays cheap.")
 

@@ -69,6 +69,7 @@ The runner now exposes the main operator levers directly in the job payload:
 - `search_budget`: max number of external enrichment results to merge
 - `design_goal`: short statement of the intended creative outcome
 - `prompt_append`: last-mile operator note appended into the prompt controls
+- the runner now hard-requires a real location module near the footer with address, hours, phone, and a map/directions link
 
 For prompt inspection:
 
@@ -123,6 +124,11 @@ Available families:
 - `modern-approachable`
 
 The selector infers a family from the industry, design goal, brand notes, and source content unless you override it with `design_family`.
+
+Restaurant note:
+
+- diner / breakfast / family-owned signals now bias toward `warm-hospitality`
+- `editorial-luxury` should usually be reserved for genuinely upscale or nightlife-driven restaurant positioning
 
 ## Model policy
 
