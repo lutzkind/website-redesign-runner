@@ -1,634 +1,768 @@
-/* ── WebRedesign SaaS — Application Logic ──────────────────── */
+const API = "/api";
 
-// ── Config ───────────────────────────
-const API = window.API_BASE || '/api';
-let TOKEN = localStorage.getItem('wr_token') || null;
-let CURRENT_USER = null;
-let CURRENT_SITE = null;
-let POLL_INTERVAL = null;
+const state = {
+  token: localStorage.getItem("wr_token") || null,
+  user: null,
+  pricing: null,
+  currentSite: null,
+  currentOffer: null,
+  pollTimer: null,
+  pollJobId: null,
+};
 
-// ── Toast system ─────────────────────
-function toast(message, type = 'success') {
-  const container = document.getElementById('toast-container');
-  const el = document.createElement('div');
-  el.className = `toast toast-${type}`;
-  el.textContent = message;
-  container.appendChild(el);
-  setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 3000);
+const app = document.getElementById("app");
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 }
 
-// ── API client ───────────────────────
-async function api(method, path, body = null) {
-  const opts = {
+function toast(message, type = "success") {
+  const stack = document.getElementById("toast-container");
+  const el = document.createElement("div");
+  el.className = `toast ${type === "error" ? "toast-error" : ""}`;
+  el.textContent = message;
+  stack.appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+async function api(method, path, body) {
+  const headers = { "Content-Type": "application/json" };
+  if (state.token) headers.Authorization = `Bearer ${state.token}`;
+  const response = await fetch(`${API}${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json' },
-  };
-  if (TOKEN) opts.headers['Authorization'] = `Bearer ${TOKEN}`;
-  if (body && method !== 'GET') opts.body = JSON.stringify(body);
-  const resp = await fetch(`${API}${path}`, opts);
-  const data = await resp.json();
-  if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.error || `HTTP ${response.status}`);
+    error.code = data.code;
+    throw error;
+  }
   return data;
 }
 
-// Shortcuts
-const apiGet = (p) => api('GET', p);
-const apiPost = (p, b) => api('POST', p, b);
+const apiGet = (path) => api("GET", path);
+const apiPost = (path, body) => api("POST", path, body);
 
-// ── Router ────────────────────────────
-const router = {
-  current: 'landing',
-  go(path) {
-    history.pushState(null, '', path);
-    this._resolve(path);
-  },
-  _resolve(path) {
-    this._hideAll();
-    this.current = 'landing';
-    const p = path.replace(/^\/+/, '').split(/[?#]/)[0];
-    const viewMap = {
-      '': 'landing',
-      'login': 'login',
-      'verify': 'verify',
-      'dashboard': 'dashboard',
-      'app': 'editor',
-      'billing': 'billing',
-      'domain': 'domain',
-    };
-    const view = viewMap[p] || 'landing';
-    if (view === 'editor') {
-      const params = new URLSearchParams(window.location.search);
-      const sid = params.get('site');
-      if (sid) {
-        document.getElementById('view-editor').classList.remove('hidden');
-        loadEditor(sid);
-        this.current = 'editor';
-        return;
-      }
-      // No site param — redirect to dashboard
-      this.go('/dashboard');
-      return;
-    }
-    if (['dashboard','billing','domain'].includes(view) && !TOKEN) {
-      this.go('/login');
-      return;
-    }
-    document.getElementById(`view-${view}`).classList.remove('hidden');
-    this.current = view;
-    this._onEnter(view);
-  },
-  _hideAll() {
-    ['view-landing','view-login','view-verify','view-dashboard','view-editor','view-billing','view-domain'].forEach(id => {
-      document.getElementById(id).classList.add('hidden');
-    });
-    document.getElementById('view-loading').classList.add('hidden');
-  },
-  _onEnter(view) {
-    if (view === 'dashboard') loadDashboard();
-    if (view === 'billing') loadPricing();
-    if (view === 'landing') loadPricingLanding();
-    updateNav();
-  },
-  init() {
-    // Check for login token in URL
+function stopPolling() {
+  if (state.pollTimer) {
+    clearInterval(state.pollTimer);
+    state.pollTimer = null;
+  }
+  state.pollJobId = null;
+}
+
+function routeInfo(pathname = window.location.pathname) {
+  const clean = pathname.replace(/\/+$/, "") || "/";
+  if (clean.startsWith("/offer/")) {
+    return { name: "offer", token: clean.split("/")[2] || "" };
+  }
+  if (clean === "/login") return { name: "login" };
+  if (clean === "/billing") return { name: "billing" };
+  if (clean === "/dashboard") return { name: "dashboard" };
+  if (clean === "/app") {
     const params = new URLSearchParams(window.location.search);
-    const token = params.get('token');
-    if (token) {
-      this.go('/verify');
-      verifyToken(token);
-      return;
-    }
-    window.addEventListener('popstate', () => this._resolve(window.location.pathname));
-    this._resolve(window.location.pathname);
+    return { name: "editor", siteId: params.get("site") };
   }
-};
-
-// ── Navigation ────────────────────────
-function updateNav() {
-  const el = document.getElementById('nav-links');
-  if (TOKEN && CURRENT_USER) {
-    el.innerHTML = `
-      <a href="/dashboard" onclick="router.go('/dashboard');return false" style="font-size:0.9rem">Dashboard</a>
-      <a href="/billing" onclick="router.go('/billing');return false" style="font-size:0.9rem;color:var(--text-muted)">Pricing</a>
-      <div class="nav-avatar">${CURRENT_USER.name?.[0] || CURRENT_USER.email?.[0] || '?'}</div>
-      <button class="btn btn-ghost btn-sm" onclick="handleLogout()">Sign out</button>
-    `;
-  } else {
-    el.innerHTML = `<button class="btn btn-primary btn-sm" onclick="router.go('/login')">Sign in</button>`;
-  }
+  return { name: "landing" };
 }
 
-function handleLogout() {
-  TOKEN = null;
-  CURRENT_USER = null;
-  localStorage.removeItem('wr_token');
-  router.go('/');
+function navigate(path, push = true) {
+  stopPolling();
+  if (push) history.pushState({}, "", path);
+  renderRoute();
 }
 
-// ── Auth handlers ────────────────────
-async function handleLogin() {
-  const email = document.getElementById('login-email').value.trim();
-  if (!email || !email.includes('@')) { toast('Enter a valid email', 'error'); return; }
-  const btn = document.getElementById('login-btn');
-  btn.disabled = true; btn.textContent = 'Sending...';
+async function loadUser() {
+  if (!state.token) {
+    state.user = null;
+    return null;
+  }
   try {
-    const data = await apiPost('/auth/login?email=' + encodeURIComponent(email));
-    document.getElementById('login-status').classList.remove('hidden');
-    if (data.login_url) {
-      document.getElementById('login-status').innerHTML = `
-        <p style="color:var(--green);margin-bottom:12px">✓ Dev mode — click to login:</p>
-        <a href="${data.login_url}" style="color:var(--accent);word-break:break-all">${data.login_url}</a>
-      `;
-    } else {
-      document.getElementById('login-status').innerHTML = `<p style="color:var(--green)">✓ Check your email for the login link</p>`;
-    }
-  } catch (e) {
-    toast(e.message, 'error');
-  }
-  btn.disabled = false; btn.textContent = 'Send magic link';
-}
-
-async function verifyToken(token) {
-  try {
-    const data = await apiGet('/auth/verify?token=' + encodeURIComponent(token));
-    TOKEN = data.token;
-    CURRENT_USER = data.user;
-    localStorage.setItem('wr_token', TOKEN);
-    toast('Signed in as ' + data.user.email);
-    router.go('/dashboard');
-  } catch (e) {
-    toast('Login link expired or invalid: ' + e.message, 'error');
-    router.go('/login');
+    const me = await apiGet("/me");
+    state.user = me.user;
+    return me;
+  } catch (error) {
+    state.user = null;
+    state.token = null;
+    localStorage.removeItem("wr_token");
+    return null;
   }
 }
 
-// ── Demo / Landing ────────────────────
-async function demoRedesign() {
-  const url = document.getElementById('demo-input').value.trim();
-  if (!url) { toast('Enter a URL first', 'error'); return; }
-  if (!TOKEN) { router.go('/login'); return; }
-  // Create a site from this URL
-  try {
-    const slug = url.replace(/https?:\/\//,'').replace(/[^a-z0-9]/gi,'-').toLowerCase().slice(0,30);
-    const data = await apiPost('/sites', { source_url: url, slug, title: 'My Site' });
-    CURRENT_SITE = data.site;
-    router.go('/app?site=' + data.site.id);
-  } catch (e) {
-    toast(e.message, 'error');
-  }
-}
-
-// ── Dashboard ─────────────────────────
-async function loadDashboard() {
-  try {
-    const data = await apiGet('/me');
-    CURRENT_USER = data.user;
-    document.getElementById('stat-sites').textContent = '...';
-    document.getElementById('stat-credits').textContent = data.credits.unlimited ? '∞' : data.credits.credits;
-    document.getElementById('stat-tier').textContent = data.credits.tier;
-
-    const sites = await apiGet('/sites');
-    const list = document.getElementById('sites-list');
-    if (!sites.sites || sites.sites.length === 0) {
-      list.innerHTML = `<div class="card" style="text-align:center;padding:48px;color:var(--text-dim)">No sites yet. Click "+ New Site" to start.</div>`;
-    } else {
-      document.getElementById('stat-sites').textContent = sites.sites.length;
-      list.innerHTML = sites.sites.map(s => {
-        const statusBadge = s.status === 'live' ? 'badge-green' : s.status === 'draft' ? 'badge-dim' : 'badge-amber';
-        return `
-          <div class="card" style="margin-bottom:12px;cursor:pointer" onclick="router.go('/app?site=${s.id}')">
-            <div class="flex items-center justify-between">
-              <div>
-                <div style="font-weight:600">${s.title || s.slug}</div>
-                <div style="font-size:0.85rem;color:var(--text-dim)">${s.source_url}</div>
-              </div>
-              <div class="flex items-center gap-sm">
-                <span class="badge ${statusBadge}">${s.status}</span>
-                <span style="color:var(--text-dim)">→</span>
-              </div>
-            </div>
-          </div>
-        `;
-      }).join('');
-    }
-    updateNav();
-  } catch (e) {
-    if (e.message.includes('401') || e.message.includes('Unauthorized')) {
-      TOKEN = null; localStorage.removeItem('wr_token');
-      router.go('/login');
-    } else {
-      toast(e.message, 'error');
-    }
-  }
-}
-
-function showNewSiteModal() {
-  document.getElementById('new-site-modal').classList.remove('hidden');
-}
-
-function closeModal(id) {
-  document.getElementById(id).classList.add('hidden');
-}
-
-async function createNewSite() {
-  const url = document.getElementById('new-site-url').value.trim();
-  const name = document.getElementById('new-site-name').value.trim() || url;
-  const industry = document.getElementById('new-site-industry').value;
-  if (!url) { toast('Enter a website URL', 'error'); return; }
-  const slug = url.replace(/https?:\/\//,'').replace(/[^a-z0-9]/gi,'-').toLowerCase().slice(0,30);
-  try {
-    const data = await apiPost('/sites', { source_url: url, slug, title: name });
-    closeModal('new-site-modal');
-    toast('Site created! Starting your first redesign...');
-    CURRENT_SITE = data.site;
-    router.go('/app?site=' + data.site.id);
-  } catch (e) {
-    toast(e.message, 'error');
-  }
-}
-
-// ── Editor (Core Product) ─────────────
-async function loadEditor(siteId) {
-  try {
-    const data = await apiGet('/me');
-    CURRENT_USER = data.user;
-    const sites = await apiGet('/sites');
-    const site = sites.sites.find(s => s.id == siteId);
-    if (!site) { toast('Site not found', 'error'); router.go('/dashboard'); return; }
-    CURRENT_SITE = site;
-
-    document.getElementById('editor-site-name').textContent = site.title || site.slug;
-    document.getElementById('editor-site-url').textContent = site.source_url;
-
-    // Update credit display
-    updateEditorCredits(data);
-
-    // If there's a current job, try to show the preview
-    if (site.current_job_id) {
-      checkJobStatus(site.current_job_id, site);
-    }
-
-    // Enable buttons if there's a job
-    if (site.current_job_id) {
-      document.getElementById('btn-publish').disabled = false;
-      document.getElementById('btn-export').disabled = false;
-      document.getElementById('btn-domain').disabled = false;
-    }
-
-    // Update versions
-    await loadVersions(site);
-
-  } catch (e) {
-    toast(e.message, 'error');
-  }
-}
-
-function updateEditorCredits(data) {
-  const el = document.getElementById('editor-credit-text');
-  if (data.credits.unlimited) {
-    el.textContent = 'Unlimited (Pro plan)';
-    document.getElementById('editor-credit-text').style.color = 'var(--green)';
-  } else {
-    el.textContent = `${data.credits.credits} remaining`;
-  }
-}
-
-async function loadVersions(site) {
-  // Show recent jobs as versions
-  const el = document.getElementById('editor-versions');
-  try {
-    if (site.current_job_id) {
-      const state = await apiGet('/jobs/' + site.current_job_id);
-      const time = state.created_at ? new Date(state.created_at).toLocaleString() : '';
-      el.innerHTML = `
-        <div class="version-item" onclick="viewVersion('${site.current_job_id}')">
-          <div style="font-weight:500;font-size:0.9rem">${state.status === 'completed' ? '✓' : '⟳'} Latest redesign</div>
-          <div class="version-time">${time} • ${state.status}</div>
-        </div>
-      `;
-    } else {
-      el.innerHTML = `<div style="font-size:0.85rem;color:var(--text-dim)">No versions yet</div>`;
-    }
-  } catch(e) {
-    el.innerHTML = `<div style="font-size:0.85rem;color:var(--text-dim)">No versions yet</div>`;
-  }
-}
-
-function viewVersion(jobId) {
-  // Re-check a specific job
-  checkJobStatus(jobId, CURRENT_SITE);
-}
-
-async function submitPrompt() {
-  const prompt = document.getElementById('editor-prompt').value.trim();
-  if (!prompt) { toast('Describe what you want to change', 'error'); return; }
-  if (!CURRENT_SITE) return;
-
-  // Check credits
-  try {
-    const me = await apiGet('/me');
-    if (!me.credits.unlimited && me.credits.credits <= 0) {
-      toast('No credits remaining. Buy more or subscribe to Pro.', 'error');
-      return;
-    }
-  } catch(e) { toast(e.message, 'error'); return; }
-
-  const btn = document.getElementById('editor-submit-btn');
-  btn.disabled = true; btn.textContent = '⟳';
-
-  // Show progress
-  document.getElementById('editor-job-status').classList.remove('hidden');
-  document.getElementById('editor-status-text').textContent = 'Starting redesign...';
-  document.getElementById('editor-progress').style.width = '10%';
-
-  try {
-    const data = await apiPost('/jobs', {
-      site_id: CURRENT_SITE.id,
-      prompt: prompt,
-      industry: 'general',
-    });
-
-    document.getElementById('editor-progress').style.width = '30%';
-    document.getElementById('editor-status-text').textContent = 'AI is generating your redesign...';
-
-    // Start polling
-    if (data.job_id) {
-      pollJob(data.job_id);
-    }
-  } catch (e) {
-    toast(e.message, 'error');
-    document.getElementById('editor-job-status').classList.add('hidden');
-    btn.disabled = false; btn.textContent = '→';
-  }
-}
-
-let currentPollJobId = null;
-
-async function pollJob(jobId) {
-  currentPollJobId = jobId;
-  const maxAttempts = 120; // 10 minutes at 5s intervals
-  for (let i = 0; i < maxAttempts; i++) {
-    if (currentPollJobId !== jobId) return; // cancelled by new submission
-    try {
-      const state = await apiGet('/jobs/' + jobId);
-      const pct = Math.min(30 + (i / maxAttempts) * 60, 90);
-      document.getElementById('editor-progress').style.width = pct + '%';
-
-      if (state.status === 'completed') {
-        document.getElementById('editor-progress').style.width = '100%';
-        document.getElementById('editor-status-text').textContent = '✓ Redesign complete!';
-        setTimeout(() => document.getElementById('editor-job-status').classList.add('hidden'), 2000);
-
-        // Show preview
-        if (state.preview_url) {
-          showPreview(state.preview_url);
-        }
-
-        // Update site
-        if (CURRENT_SITE) {
-          await apiPost('/sites', { ...CURRENT_SITE, status: 'draft' }); // hmm, just update locally
-          CURRENT_SITE.current_job_id = jobId;
-        }
-
-        document.getElementById('btn-publish').disabled = false;
-        document.getElementById('btn-export').disabled = false;
-        document.getElementById('btn-domain').disabled = false;
-
-        btn = document.getElementById('editor-submit-btn');
-        btn.disabled = false; btn.textContent = '→';
-
-        // Refresh versions
-        if (CURRENT_SITE) loadVersions(CURRENT_SITE);
-        return;
-      }
-
-      if (state.status === 'failed') {
-        document.getElementById('editor-status-text').textContent = '✗ Redesign failed: ' + (state.error || 'unknown error');
-        document.getElementById('editor-progress').style.width = '0%';
-        toast('Redesign failed: ' + (state.error || 'unknown error'), 'error');
-        document.getElementById('editor-submit-btn').disabled = false;
-        document.getElementById('editor-submit-btn').textContent = '→';
-        return;
-      }
-
-      document.getElementById('editor-status-text').textContent = state.step || 'Processing...';
-      await sleep(5000);
-    } catch (e) {
-      // Job might not be visible yet on first poll
-      await sleep(3000);
-    }
-  }
-  document.getElementById('editor-status-text').textContent = '✗ Timed out';
-  toast('The redesign is taking longer than expected. Check back soon.', 'error');
-}
-
-function showPreview(url) {
-  const placeholder = document.getElementById('editor-placeholder');
-  const iframe = document.getElementById('editor-iframe');
-  placeholder.classList.add('hidden');
-  iframe.classList.remove('hidden');
-  iframe.src = url;
-}
-
-function checkJobStatus(jobId, site) {
-  // If preview_url is in local state, try showing it
-  if (site.preview_url) {
-    showPreview(site.preview_url);
-  }
-  // Poll for latest
-  pollJob(jobId);
-}
-
-async function publishSite() {
-  if (!CURRENT_SITE) return;
-  toast('Publishing to ' + (CURRENT_SITE.subdomain || 'subdomain') + '...');
-  // Copy site files to the subdomain path
-  // For now, just show the preview URL
-  if (CURRENT_SITE.current_job_id) {
-    const state = await apiGet('/jobs/' + CURRENT_SITE.current_job_id);
-    if (state.preview_url) {
-      toast('Site available at ' + state.preview_url);
-    }
-  }
-}
-
-async function exportSite() {
-  if (!CURRENT_SITE) return;
-  try {
-    const data = await apiGet('/sites/' + CURRENT_SITE.id + '/export');
-    if (data.download_url) {
-      window.open(data.download_url, '_blank');
-      toast('Downloading export ZIP');
-    }
-  } catch (e) {
-    toast(e.message, 'error');
-  }
-}
-
-function setupDomain() {
-  if (!CURRENT_SITE) return;
-  router.go('/domain');
-}
-
-// ── Domain Setup Wizard ──────────────
-let domainSiteId = null;
-let domainName = '';
-
-async function domainStep1() {
-  const dom = document.getElementById('domain-input').value.trim().toLowerCase();
-  if (!dom || !dom.includes('.')) { toast('Enter a valid domain', 'error'); return; }
-  domainName = dom;
-  document.getElementById('domain-display').textContent = dom;
-
-  try {
-    const data = await apiGet('/dns/check?domain=' + encodeURIComponent(dom));
-    const recordsEl = document.getElementById('domain-records');
-    recordsEl.innerHTML = `
-      <table class="dns-table">
-        <tr><th>Type</th><th>Value</th></tr>
-        <tr><td>A</td><td><code>${data.a_record || '—'}</code></td></tr>
-        <tr><td>MX</td><td><code>${data.records?.mx?.split('\n')[0] || '—'}</code></td></tr>
-        <tr><td>CNAME</td><td><code>${data.records?.cname || '—'}</code></td></tr>
-      </table>
-    `;
-    if (data.warnings && data.warnings.length > 0) {
-      const w = document.getElementById('domain-warnings');
-      w.classList.remove('hidden');
-      w.innerHTML = data.warnings.join('<br>');
-    }
-    showDomainStep(2);
-  } catch (e) {
-    toast(e.message, 'error');
-  }
-}
-
-function domainStep2() {
-  document.getElementById('domain-server-ip').textContent = window.location.hostname || 'YOUR_SERVER_IP';
-  showDomainStep(3);
-}
-
-async function domainStep3() {
-  showDomainStep(4);
-  document.getElementById('domain-status-text').textContent = 'Checking DNS propagation...';
-
-  // Poll DNS every 10 seconds
-  for (let i = 0; i < 36; i++) { // 6 minutes max
-    try {
-      const data = await apiGet('/dns/check?domain=' + encodeURIComponent(domainName));
-      if (data.points_to_me) {
-        document.getElementById('domain-spinner').classList.add('hidden');
-        document.getElementById('domain-status-text').innerHTML = '✓ DNS is pointing to our server!';
-        document.getElementById('domain-live-url').textContent = `https://${domainName}/`;
-
-        // Register domain in backend
-        if (CURRENT_SITE) {
-          await apiPost('/domains', { site_id: CURRENT_SITE.id, domain: domainName });
-          await apiPost('/domains/verify', { domain_id: 1, domain: domainName, site_id: CURRENT_SITE.id });
-        }
-
-        document.getElementById('domain-success').classList.remove('hidden');
-        return;
-      }
-    } catch (e) {
-      // keep polling
-    }
-    document.getElementById('domain-status-text').textContent = `Checking... (${i + 1}/36)`;
-    await sleep(10000);
-  }
-
-  document.getElementById('domain-status-text').textContent = 'DNS not detected yet. Try again later or check your DNS settings.';
-  document.getElementById('domain-spinner').classList.add('hidden');
-}
-
-function showDomainStep(step) {
-  for (let i = 1; i <= 4; i++) {
-    const el = document.getElementById('domain-step-' + i);
-    const stepEl = document.getElementById('ds-' + i);
-    if (el) el.classList.toggle('hidden', i !== step);
-    if (stepEl) {
-      stepEl.classList.toggle('active', i === step);
-      stepEl.classList.toggle('completed', i < step);
-    }
-  }
-}
-
-// ── Pricing ───────────────────────────
 async function loadPricing() {
-  try {
-    const data = await apiGet('/pricing');
-    renderPricing(data, 'pricing-grid-billing');
-  } catch (e) { /* no-op */ }
+  if (!state.pricing) state.pricing = await apiGet("/pricing");
+  return state.pricing;
 }
 
-async function loadPricingLanding() {
-  try {
-    const data = await apiGet('/pricing');
-    renderPricing(data, 'pricing-grid-landing');
-  } catch (e) { /* no-op */ }
+function renderLayout(content, options = {}) {
+  const showFreeCta = !options.hideFreeCta;
+  const nav = options.hideNav
+    ? ""
+    : `
+      <header class="topbar">
+        <a class="brand" href="/" onclick="navigate('/'); return false;">
+          <span class="brand-mark">◆</span> WebRedesign
+        </a>
+        <div class="nav-actions">
+          ${
+            state.user
+              ? `
+                <button class="btn btn-secondary" onclick="navigate('/dashboard')">Dashboard</button>
+                <button class="btn btn-link" onclick="logout()">Sign out</button>
+              `
+              : `
+                <button class="btn btn-link" onclick="navigate('/login')">Sign in</button>
+                ${showFreeCta ? `<button class="btn btn-primary" onclick="document.getElementById('free-claim-website')?.focus()">Get your free redesign</button>` : ""}
+              `
+          }
+        </div>
+      </header>
+    `;
+  app.innerHTML = `<div class="shell">${nav}${content}</div>`;
 }
 
-function renderPricing(data, containerId) {
-  const el = document.getElementById(containerId);
-  if (!el) return;
-  el.innerHTML = `
-    <div class="pricing-card">
-      <h3 style="margin-bottom:8px">Credit Pack</h3>
-      <div class="price">$${(data.credit_pack.price_cents / 100).toFixed(0)}</div>
-      <div class="price-period">${data.credit_pack.credits} credits</div>
-      <ul class="feature-list">
-        <li>One-time purchase</li>
-        <li>${data.credit_pack.credits} redesign iterations</li>
-        <li>No expiration</li>
-      </ul>
-      <button class="btn btn-secondary" style="width:100%" onclick="buyPlan('${data.credit_pack.price_id}')">Buy Credits</button>
-    </div>
-    <div class="pricing-card featured">
-      <h3 style="margin-bottom:8px">Pro Monthly</h3>
-      <div class="price">$${((data.pro_monthly.price_cents || 1900) / 100).toFixed(0)}</div>
-      <div class="price-period">per month</div>
-      <ul class="feature-list">
-        <li>Unlimited redesigns</li>
-        <li>Subdomain hosting included</li>
-        <li>Custom domain support</li>
-        <li>Priority processing</li>
-      </ul>
-      <button class="btn btn-primary" style="width:100%" onclick="buyPlan('${data.pro_monthly.price_id}')">Subscribe →</button>
-    </div>
-    <div class="pricing-card">
-      <h3 style="margin-bottom:8px">Export</h3>
-      <div class="price">$${((data.export.price_cents || 19900) / 100).toFixed(0)}</div>
-      <div class="price-period">one-time</div>
-      <ul class="feature-list">
-        <li>Full site ZIP download</li>
-        <li>No attribution required</li>
-        <li>No recurring fees</li>
-        <li>Self-host anywhere</li>
-      </ul>
-      <button class="btn btn-secondary" style="width:100%" onclick="buyPlan('${data.export.price_id}')">Purchase →</button>
+function pricingCardMarkup(pricing, context = {}) {
+  const offerToken = context.offerToken || "";
+  const siteId = context.siteId || "";
+  const buttons = (planCode, label, primary = false) => `
+    <button class="btn ${primary ? "btn-primary" : "btn-secondary"}" onclick="startCheckout('${planCode}', '${siteId}', '${offerToken}')">${label}</button>
+  `;
+  return `
+    <div class="pricing-grid">
+      <article class="card pricing-card featured">
+        <div class="eyebrow">Hosted</div>
+        <h3 class="card-title">Keep it live for you</h3>
+        <div class="price">$${(pricing.hosted_monthly.price_cents / 100).toFixed(0)}</div>
+        <div class="price-meta">per month, hosting included</div>
+        <ul class="bullet-list">
+          <li>Your redesigned site stays online for you</li>
+          <li>Custom domain support when you are ready</li>
+          <li>Simple owner-friendly dashboard</li>
+        </ul>
+        <div class="actions">${buttons("hosted_monthly", "Choose monthly", true)}</div>
+      </article>
+      <article class="card pricing-card">
+        <div class="eyebrow">Yearly</div>
+        <h3 class="card-title">Pay once, save 20%</h3>
+        <div class="price">$${(pricing.hosted_yearly.price_cents / 100).toFixed(0)}</div>
+        <div class="price-meta">per year</div>
+        <ul class="bullet-list">
+          <li>The same hosted plan, billed yearly</li>
+          <li>Best fit if you want to set it and forget it</li>
+          <li>20% cheaper than monthly billing</li>
+        </ul>
+        <div class="actions">${buttons("hosted_yearly", "Choose yearly")}</div>
+      </article>
+      <article class="card pricing-card">
+        <div class="eyebrow">Redesign credits</div>
+        <h3 class="card-title">Keep refining</h3>
+        <div class="price">$${(pricing.credit_pack.price_cents / 100).toFixed(0)}</div>
+        <div class="price-meta">${pricing.credit_pack.credits} prompt credits</div>
+        <ul class="bullet-list">
+          <li>Use after the free preview to request more changes</li>
+          <li>Good if you want several rounds without a retainer</li>
+          <li>No subscription required</li>
+        </ul>
+        <div class="actions">${buttons("credit_pack", "Buy credits")}</div>
+      </article>
+      <article class="card pricing-card">
+        <div class="eyebrow">One-off</div>
+        <h3 class="card-title">Own the finished version</h3>
+        <div class="price">$${(pricing.oneoff_unlock.price_cents / 100).toFixed(0)}</div>
+        <div class="price-meta">single purchase</div>
+        <ul class="bullet-list">
+          <li>Unlock export of the redesigned site files</li>
+          <li>Best if you want to self-host elsewhere</li>
+          <li>Migration help available separately</li>
+        </ul>
+        <div class="actions">
+          ${buttons("oneoff_unlock", "Buy one-off")}
+          <a class="btn btn-link" href="${pricing.migration.contact_url}">Ask about migration</a>
+        </div>
+      </article>
     </div>
   `;
 }
 
-async function buyPlan(priceId) {
-  if (!TOKEN) { router.go('/login'); return; }
-  try {
-    const data = await apiPost('/checkout', { price_id: priceId });
-    if (data.checkout_url) {
-      window.location.href = data.checkout_url;
-    } else {
-      toast('Checkout URL not available', 'error');
+async function renderLandingPage() {
+  const pricing = await loadPricing();
+  renderLayout(`
+    <main>
+      <section class="page hero">
+        <div>
+          <div class="eyebrow">For busy small business owners</div>
+          <h1 class="hero-title">A better website, without turning you into a website project manager.</h1>
+          <p class="lead">
+            We generate a clearer, more trustworthy redesign of your existing website and give you a private place to review it.
+            You do not need design language, a brief, or extra time.
+          </p>
+          <div class="actions">
+            <button class="btn btn-primary" onclick="document.getElementById('free-claim-website').focus()">Request your free redesign</button>
+            <button class="btn btn-link" onclick="scrollToSection('pricing-section')">See pricing</button>
+          </div>
+          <p class="hero-note">One free redesign per website and per customer connection. After that, continue with credits, hosting, or a one-off unlock.</p>
+        </div>
+        <aside class="hero-panel stack">
+          <div class="eyebrow">Start here</div>
+          <div id="free-claim-status"></div>
+          <div class="field">
+            <label class="field-label" for="free-claim-website">Your website</label>
+            <input id="free-claim-website" class="input" placeholder="https://yourbusiness.com">
+          </div>
+          <div class="field">
+            <label class="field-label" for="free-claim-company">Business name</label>
+            <input id="free-claim-company" class="input" placeholder="Acme Dental">
+          </div>
+          <div class="field">
+            <label class="field-label" for="free-claim-email">Email</label>
+            <input id="free-claim-email" class="input" type="email" placeholder="owner@yourbusiness.com">
+          </div>
+          <div class="actions">
+            <button class="btn btn-primary" onclick="submitFreeClaim()">Generate my free redesign</button>
+          </div>
+        </aside>
+      </section>
+
+      <section class="page section">
+        <div class="section-grid">
+          <article class="card">
+            <div class="eyebrow">What you get</div>
+            <h2 class="card-title">A stronger first impression</h2>
+            <p class="muted">We focus on clarity, trust, contact flow, and a design that feels current without becoming trendy noise.</p>
+          </article>
+          <article class="card">
+            <div class="eyebrow">How it works</div>
+            <h2 class="card-title">You review, not manage</h2>
+            <p class="muted">We generate the first redesign for free. If you want changes, you can keep refining it with simple written requests.</p>
+          </article>
+          <article class="card">
+            <div class="eyebrow">Why this model</div>
+            <h2 class="card-title">No bloated agency process</h2>
+            <p class="muted">Start with something concrete instead of a long sales call, a questionnaire, and weeks of back-and-forth.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="page section">
+        <div class="helper-grid">
+          <article class="card">
+            <div class="eyebrow">1</div>
+            <h3 class="card-title">Submit your current site</h3>
+            <p class="muted">We only need your website and email to start your free preview.</p>
+          </article>
+          <article class="card">
+            <div class="eyebrow">2</div>
+            <h3 class="card-title">Review the redesign privately</h3>
+            <p class="muted">You receive a private link and can look through the redesign before committing to anything.</p>
+          </article>
+          <article class="card">
+            <div class="eyebrow">3</div>
+            <h3 class="card-title">Choose the path that fits</h3>
+            <p class="muted">Host it with us, buy credits for more changes, or unlock the one-off version and take it elsewhere.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="page section" id="pricing-section">
+        <div class="eyebrow">Pricing</div>
+        <h2 class="section-title">Simple choices after the free preview.</h2>
+        <p class="lead">The hosted plan keeps your redesigned website live for you. Credits buy additional redesign rounds. One-off unlock is for owners who want the files outright.</p>
+        ${pricingCardMarkup(pricing)}
+      </section>
+    </main>
+  `);
+}
+
+function renderLoginPage() {
+  renderLayout(`
+    <main class="page section">
+      <div class="card" style="max-width: 520px; margin: 40px auto;">
+        <div class="eyebrow">Sign in</div>
+        <h1 class="section-title">Use your email link.</h1>
+        <p class="lead">No password to remember. We email you a private link to your dashboard or preview.</p>
+        <div id="login-status"></div>
+        <div class="stack">
+          <div class="field">
+            <label class="field-label" for="login-email">Email</label>
+            <input id="login-email" class="input" type="email" placeholder="you@business.com">
+          </div>
+          <div class="actions">
+            <button class="btn btn-primary" onclick="submitLogin()">Send sign-in link</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  `);
+}
+
+async function renderDashboardPage() {
+  const me = await apiGet("/me");
+  const data = await apiGet("/sites");
+  renderLayout(`
+    <main class="page section stack">
+      <div>
+        <div class="eyebrow">Dashboard</div>
+        <h1 class="section-title">Your redesigns.</h1>
+        <p class="lead">Review the current state of each site, buy more prompt credits, or reopen a project to request the next round.</p>
+      </div>
+
+      <div class="helper-grid">
+        <div class="card">
+          <div class="eyebrow">Credits</div>
+          <h3 class="card-title">${me.credits.credits}</h3>
+          <p class="muted">Available prompt requests</p>
+        </div>
+        <div class="card">
+          <div class="eyebrow">Hosting plan</div>
+          <h3 class="card-title">${me.subscription ? escapeHtml(me.subscription.plan_code.replaceAll("_", " ")) : "Not active"}</h3>
+          <p class="muted">Monthly or yearly hosting is optional</p>
+        </div>
+        <div class="card">
+          <div class="eyebrow">Need another project?</div>
+          <h3 class="card-title">Add a site</h3>
+          <p class="muted">Create another workspace for a different business website.</p>
+        </div>
+      </div>
+
+      <div class="card stack">
+        <div class="eyebrow">Add a site</div>
+        <div class="field">
+          <label class="field-label" for="new-site-url">Website</label>
+          <input id="new-site-url" class="input" placeholder="https://anotherbusiness.com">
+        </div>
+        <div class="field">
+          <label class="field-label" for="new-site-name">Business name</label>
+          <input id="new-site-name" class="input" placeholder="Another Business">
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" onclick="createSite()">Create site</button>
+          <button class="btn btn-link" onclick="navigate('/billing')">Buy more credits</button>
+        </div>
+      </div>
+
+      <div class="dashboard-grid">
+        ${
+          data.sites.length
+            ? data.sites.map(renderSiteCard).join("")
+            : `<div class="card"><p class="muted">No sites yet. Add a site above or request your free redesign from the homepage.</p></div>`
+        }
+      </div>
+    </main>
+  `);
+}
+
+function renderSiteCard(site) {
+  const access = site.access || {};
+  const meta = [
+    access.preview_ready ? "preview ready" : site.status,
+    access.hosted_active ? "hosted" : "not hosted",
+    access.oneoff_unlocked ? "one-off unlocked" : "one-off not unlocked",
+  ].join(" · ");
+  return `
+    <article class="card site-card">
+      <div class="stack">
+        <div class="eyebrow">${escapeHtml(site.title || site.normalized_domain)}</div>
+        <h3 class="card-title">${escapeHtml(site.normalized_domain)}</h3>
+        <p class="muted">${escapeHtml(site.source_url)}</p>
+        <p class="fine">${escapeHtml(meta)}</p>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" onclick="navigate('/app?site=${site.id}')">Open project</button>
+        ${
+          access.offer_token
+            ? `<button class="btn btn-secondary" onclick="window.open('/offer/${access.offer_token}', '_blank')">Open lead page</button>`
+            : ""
+        }
+      </div>
+    </article>
+  `;
+}
+
+async function renderEditorPage(siteId) {
+  if (!siteId) {
+    navigate("/dashboard");
+    return;
+  }
+  const siteResponse = await apiGet(`/sites/${siteId}`);
+  const site = siteResponse.site;
+  state.currentSite = site;
+  maybePollSite(site);
+
+  const access = site.access || {};
+  const preview = site.preview_url
+    ? `<iframe class="preview-frame" src="${escapeHtml(site.preview_url)}"></iframe>`
+    : `
+      <div class="preview-empty">
+        <div>
+          <div class="eyebrow">Preview</div>
+          <h2 class="section-title">Your redesign will appear here.</h2>
+          <p class="lead">${site.current_job_id ? "We are still generating the current version." : "Use the prompt panel to request your next round."}</p>
+        </div>
+      </div>
+    `;
+
+  renderLayout(`
+    <main class="editor-shell">
+      <section class="preview-card">${preview}</section>
+      <aside class="editor-panel">
+        <div class="editor-summary">
+          <div class="eyebrow">${escapeHtml(site.title || site.normalized_domain)}</div>
+          <h1 class="section-title">${escapeHtml(site.normalized_domain)}</h1>
+          <p class="muted">${escapeHtml(site.source_url)}</p>
+        </div>
+
+        <div class="status-banner ${access.preview_ready ? "status-success" : "status-warning"}">
+          ${access.preview_ready ? "Preview ready." : "Preview still generating or awaiting the first run."}
+        </div>
+
+        <div class="card stack">
+          <div class="eyebrow">Prompt next change</div>
+          <div class="field">
+            <label class="field-label" for="editor-prompt">What should change?</label>
+            <textarea id="editor-prompt" class="textarea" placeholder="Example: make the homepage easier to scan and add a stronger contact section."></textarea>
+          </div>
+          <p class="fine">Credits remaining: ${access.credits ?? 0}</p>
+          <div class="actions">
+            <button class="btn btn-primary" onclick="submitPrompt(${site.id})">Run redesign</button>
+            <button class="btn btn-link" onclick="navigate('/billing?site=${site.id}')">Buy credits</button>
+          </div>
+        </div>
+
+        <div class="card stack">
+          <div class="eyebrow">Access</div>
+          <p class="muted">Hosting is for keeping the site live on your domain. One-off unlock is for exporting the files.</p>
+          <div class="actions">
+            <button class="btn btn-secondary" onclick="startCheckout('hosted_monthly', '${site.id}', '')">${access.hosted_active ? "Hosting active" : "Start hosting"}</button>
+            <button class="btn btn-secondary" onclick="${access.oneoff_unlocked ? `downloadExport(${site.id})` : `startCheckout('oneoff_unlock', '${site.id}', '')`}">${access.oneoff_unlocked ? "Download export" : "Unlock one-off"}</button>
+          </div>
+        </div>
+
+        <div class="card stack">
+          <div class="eyebrow">Custom domain</div>
+          ${
+            access.hosted_active
+              ? `
+                <div class="field">
+                  <label class="field-label" for="domain-input">Domain</label>
+                  <input id="domain-input" class="input" placeholder="www.yourbusiness.com">
+                </div>
+                <div class="actions">
+                  <button class="btn btn-primary" onclick="connectDomain(${site.id})">Connect domain</button>
+                </div>
+                <div id="domain-status" class="fine"></div>
+              `
+              : `<p class="muted">Custom domains are available once the hosted plan is active.</p>`
+          }
+        </div>
+
+        <div class="actions">
+          <button class="btn btn-link" onclick="navigate('/dashboard')">Back to dashboard</button>
+        </div>
+      </aside>
+    </main>
+  `);
+}
+
+async function renderBillingPage() {
+  const pricing = await loadPricing();
+  const params = new URLSearchParams(window.location.search);
+  const siteId = params.get("site") || "";
+  renderLayout(`
+    <main class="page section stack">
+      <div>
+        <div class="eyebrow">Pricing</div>
+        <h1 class="section-title">Choose the next step.</h1>
+        <p class="lead">Hosting keeps the redesign live for you. Credits buy additional redesign rounds. One-off purchase unlocks the exported files.</p>
+      </div>
+      ${pricingCardMarkup(pricing, { siteId })}
+    </main>
+  `);
+}
+
+async function renderOfferPage(token) {
+  const data = await apiGet(`/offers/${token}`);
+  state.currentOffer = data.offer;
+  if (data.site?.current_job_id && !data.site?.preview_url) maybePollSite(data.site);
+  renderLayout(
+    `
+      <main class="page offer-shell">
+        <div class="offer-grid">
+          <section class="stack">
+            <div>
+              <div class="eyebrow">Private redesign for ${escapeHtml(data.offer.company_name)}</div>
+              <h1 class="hero-title">${escapeHtml(data.offer.headline || `Here is your redesigned website.`)}</h1>
+              <p class="lead">
+                This page was prepared specifically for ${escapeHtml(data.offer.company_name)}.
+                Review the redesign first, then choose whether you want us to host it, keep refining it, or unlock the files outright.
+              </p>
+            </div>
+            <div class="offer-preview">
+              ${
+                data.site?.preview_url
+                  ? `<iframe class="offer-iframe" src="${escapeHtml(data.site.preview_url)}"></iframe>`
+                  : `<div class="card"><p class="muted">The redesign is still rendering. Refresh this page in a minute to review it.</p></div>`
+              }
+            </div>
+          </section>
+          <aside class="offer-card stack">
+            <div class="eyebrow">Choose your path</div>
+            <p class="muted">The homepage free-offer form is disabled here because this redesign has already been prepared for your business.</p>
+            <div class="stack">
+              <button class="btn btn-primary" onclick="startCheckout('hosted_monthly', '${data.site?.id || ""}', '${token}')">Host this version for me</button>
+              <button class="btn btn-secondary" onclick="startCheckout('hosted_yearly', '${data.site?.id || ""}', '${token}')">Choose yearly hosting</button>
+              <button class="btn btn-secondary" onclick="startCheckout('credit_pack', '${data.site?.id || ""}', '${token}')">Buy redesign credits</button>
+              <button class="btn btn-secondary" onclick="startCheckout('oneoff_unlock', '${data.site?.id || ""}', '${token}')">Buy one-off unlock</button>
+              <a class="btn btn-link" href="${data.pricing.migration.contact_url}">Ask about migration help</a>
+            </div>
+            <div class="divider"></div>
+            <p class="fine">Need your private dashboard link instead? Use the sign-in flow with <strong>${escapeHtml(data.offer.contact_email)}</strong>.</p>
+            <div class="actions">
+              <button class="btn btn-link" onclick="navigate('/login')">Sign in</button>
+            </div>
+          </aside>
+        </div>
+      </main>
+    `,
+    { hideNav: false, hideFreeCta: true }
+  );
+}
+
+async function renderRoute() {
+  const route = routeInfo();
+  if (route.name !== "offer" && !state.user && state.token) await loadUser();
+
+  if (route.name === "dashboard" || route.name === "editor" || route.name === "billing") {
+    if (!state.user) {
+      navigate("/login", route.name !== "login");
+      return;
     }
-  } catch (e) {
-    toast(e.message, 'error');
+  }
+
+  app.innerHTML = `<div class="page section"><p class="loading">Loading…</p></div>`;
+
+  try {
+    if (route.name === "landing") await renderLandingPage();
+    if (route.name === "login") renderLoginPage();
+    if (route.name === "dashboard") await renderDashboardPage();
+    if (route.name === "editor") await renderEditorPage(route.siteId);
+    if (route.name === "billing") await renderBillingPage();
+    if (route.name === "offer") await renderOfferPage(route.token);
+  } catch (error) {
+    renderLayout(`
+      <main class="page section">
+        <div class="card">
+          <div class="eyebrow">Something went wrong</div>
+          <h1 class="section-title">We could not load this page.</h1>
+          <p class="muted">${escapeHtml(error.message)}</p>
+        </div>
+      </main>
+    `);
   }
 }
 
-// ── Utilities ─────────────────────────
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+async function submitLogin() {
+  const email = document.getElementById("login-email").value.trim();
+  if (!email.includes("@")) {
+    toast("Enter a valid email.", "error");
+    return;
+  }
+  const redirect = state.currentOffer ? `/offer/${state.currentOffer.token}` : "/dashboard";
+  const result = await apiPost("/auth/login", { email, redirect_path: redirect });
+  const status = document.getElementById("login-status");
+  status.innerHTML = result.login_url
+    ? `<div class="status-banner status-warning">Email sending is disabled here. Use the dev link: <a href="${result.login_url}">${result.login_url}</a></div>`
+    : `<div class="status-banner status-success">${escapeHtml(result.message)}</div>`;
+}
 
-// ── Init ──────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  // Start hidden (remove loading)
-  document.getElementById('view-loading').classList.add('hidden');
-  router.init();
+async function verifyTokenFlow(token) {
+  const result = await apiGet(`/auth/verify?token=${encodeURIComponent(token)}`);
+  state.token = result.token;
+  state.user = result.user;
+  localStorage.setItem("wr_token", state.token);
+  const url = new URL(window.location.href);
+  url.searchParams.delete("token");
+  history.replaceState({}, "", `${url.pathname}${url.search}`);
+  navigate(result.redirect_path || "/dashboard");
+}
+
+async function submitFreeClaim() {
+  const website = document.getElementById("free-claim-website").value.trim();
+  const company = document.getElementById("free-claim-company").value.trim();
+  const email = document.getElementById("free-claim-email").value.trim();
+  if (!website || !email.includes("@")) {
+    toast("Enter your website and email first.", "error");
+    return;
+  }
+  try {
+    const result = await apiPost("/free-claims", {
+      website_url: website,
+      company_name: company,
+      email,
+    });
+    const box = document.getElementById("free-claim-status");
+    box.innerHTML = result.login_url
+      ? `<div class="status-banner status-warning">Your redesign is generating. Since email sending is disabled here, use this private link: <a href="${result.login_url}">${result.login_url}</a></div>`
+      : `<div class="status-banner status-success">${escapeHtml(result.message)}</div>`;
+    toast("Your free redesign request is in progress.");
+  } catch (error) {
+    const message =
+      error.code === "domain_already_claimed"
+        ? "A free redesign already exists for that website."
+        : error.code === "ip_already_claimed"
+          ? "This free offer has already been used from your connection."
+          : error.message;
+    toast(message, "error");
+  }
+}
+
+async function logout() {
+  try {
+    await apiPost("/auth/logout", {});
+  } catch (_) {
+    // No-op.
+  }
+  state.token = null;
+  state.user = null;
+  localStorage.removeItem("wr_token");
+  navigate("/");
+}
+
+async function createSite() {
+  const website = document.getElementById("new-site-url").value.trim();
+  const title = document.getElementById("new-site-name").value.trim();
+  if (!website) {
+    toast("Enter a website first.", "error");
+    return;
+  }
+  const result = await apiPost("/sites", { source_url: website, title });
+  navigate(`/app?site=${result.site.id}`);
+}
+
+async function submitPrompt(siteId) {
+  const prompt = document.getElementById("editor-prompt").value.trim();
+  if (!prompt) {
+    toast("Describe the next change first.", "error");
+    return;
+  }
+  try {
+    const result = await apiPost("/jobs", { site_id: siteId, prompt });
+    toast("Redesign started.");
+    state.pollJobId = result.job_id;
+    maybePollJob(result.job_id, siteId);
+  } catch (error) {
+    toast(error.message, "error");
+  }
+}
+
+function maybePollSite(site) {
+  if (site?.current_job_id && !site?.preview_url) maybePollJob(site.current_job_id, site.id);
+}
+
+function maybePollJob(jobId, siteId) {
+  stopPolling();
+  state.pollJobId = jobId;
+  state.pollTimer = setInterval(async () => {
+    try {
+      const result = await apiGet(`/jobs/${jobId}`);
+      if (result.preview_url || result.status === "completed" || result.status === "failed") {
+        stopPolling();
+        if (window.location.pathname === "/app") {
+          renderEditorPage(siteId);
+        } else if (window.location.pathname.startsWith("/offer/")) {
+          renderOfferPage(window.location.pathname.split("/")[2]);
+        }
+      }
+    } catch (_) {
+      // Ignore transient polling errors.
+    }
+  }, 5000);
+}
+
+async function startCheckout(planCode, siteId, offerToken) {
+  try {
+    if (offerToken) {
+      const result = await apiPost(`/offers/${offerToken}/checkout`, { plan_code: planCode, site_id: siteId });
+      window.location.href = result.checkout_url;
+      return;
+    }
+    if (!state.token) {
+      navigate("/login");
+      return;
+    }
+    const result = await apiPost("/checkout", { plan_code: planCode, site_id: siteId || undefined });
+    window.location.href = result.checkout_url;
+  } catch (error) {
+    toast(error.message, "error");
+  }
+}
+
+async function downloadExport(siteId) {
+  try {
+    const result = await apiGet(`/sites/${siteId}/export`);
+    if (result.download_url) {
+      window.open(result.download_url, "_blank");
+    }
+  } catch (error) {
+    toast(error.message, "error");
+  }
+}
+
+async function connectDomain(siteId) {
+  const domain = document.getElementById("domain-input").value.trim().toLowerCase();
+  if (!domain) {
+    toast("Enter a domain first.", "error");
+    return;
+  }
+  const status = document.getElementById("domain-status");
+  status.textContent = "Checking domain configuration…";
+  try {
+    const created = await apiPost("/domains", { site_id: siteId, domain });
+    const verify = await apiPost("/domains/verify", {
+      site_id: siteId,
+      domain_id: created.domain.id,
+      domain,
+    });
+    status.textContent = verify.points_to_me
+      ? `Domain verified. Point your browser to https://${domain}/ once SSL finishes provisioning.`
+      : "DNS is not pointing here yet. Update your A record and try again.";
+  } catch (error) {
+    status.textContent = error.message;
+  }
+}
+
+function scrollToSection(id) {
+  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+window.navigate = navigate;
+window.submitLogin = submitLogin;
+window.submitFreeClaim = submitFreeClaim;
+window.logout = logout;
+window.createSite = createSite;
+window.submitPrompt = submitPrompt;
+window.startCheckout = startCheckout;
+window.downloadExport = downloadExport;
+window.connectDomain = connectDomain;
+window.scrollToSection = scrollToSection;
+
+window.addEventListener("popstate", () => renderRoute());
+
+document.addEventListener("DOMContentLoaded", async () => {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("token")) {
+    try {
+      await verifyTokenFlow(params.get("token"));
+      return;
+    } catch (error) {
+      toast(error.message, "error");
+    }
+  }
+  await loadUser();
+  renderRoute();
 });
