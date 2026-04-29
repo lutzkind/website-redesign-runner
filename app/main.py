@@ -8,7 +8,6 @@ import threading
 import time
 import traceback
 import uuid
-from colorsys import rgb_to_hsv
 from urllib.error import HTTPError, URLError
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -26,9 +25,7 @@ ROOT = Path(os.environ.get("WEBSITE_REDESIGN_ROOT", "/data"))
 SKILLS_DIR = Path(os.environ.get("WEBSITE_REDESIGN_SKILLS_DIR", str(ROOT / "skills")))
 DEFAULT_INDUSTRY = os.environ.get("WEBSITE_REDESIGN_DEFAULT_INDUSTRY", "general")
 FIRECRAWL_URL = os.environ.get("WEBSITE_REDESIGN_FIRECRAWL_URL", "http://127.0.0.1:3092").rstrip("/")
-MAX_REFERENCE_SITES = int(os.environ.get("WEBSITE_REDESIGN_MAX_REFERENCE_SITES", "3"))
 FIRECRAWL_SCRAPE_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_FIRECRAWL_TIMEOUT", "90"))
-SCREENSHOT_CAPTURE_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_SCREENSHOT_TIMEOUT", "120"))
 IMPECCABLE_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_TIMEOUT", "180"))
 DEFAULT_IMPECCABLE_CRITIQUE = os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_CRITIQUE", "true")
 DEFAULT_IMPECCABLE_AUTOFIX = os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_AUTOFIX", "true")
@@ -45,6 +42,92 @@ DEFAULT_SKILLS = [
     ).split(",")
     if item.strip()
 ]
+
+DESIGN_FAMILY_LIBRARY = {
+    "editorial-luxury": {
+        "summary": "High-contrast editorial hospitality direction with dramatic type, cinematic imagery, and restrained premium surfaces.",
+        "ideal_for": ["restaurant", "hotel", "bar", "salon", "boutique"],
+        "typography": "Expressive serif display paired with clean sans-serif body copy.",
+        "palette": "Cream, ink, oxblood, brass, and smoked neutrals.",
+        "layout": "Large image-led hero, alternating narrative bands, generous whitespace, and gallery interludes.",
+        "components": "Understated navigation, elegant reservation CTA, image-framed testimonials, and editorial menu/story sections.",
+        "motion": "Slow fades, soft reveal transitions, and no flashy motion.",
+        "anti_patterns": "Do not use startup-style feature grids, tiny type, or neon accents.",
+    },
+    "warm-hospitality": {
+        "summary": "Tactile, welcoming, and polished neighborhood-premium direction for food, beverage, and service brands.",
+        "ideal_for": ["restaurant", "cafe", "bakery", "spa", "general"],
+        "typography": "Soft serif or humanist display with warm sans-serif support.",
+        "palette": "Stone, parchment, terracotta, deep espresso, and muted olive accents.",
+        "layout": "Story-led hero, cozy content width, layered imagery, and rhythm built around atmosphere and trust.",
+        "components": "Rounded CTA pills, proof strips, gallery clusters, and service cards with subtle warmth.",
+        "motion": "Minimal parallax feel through composition only; motion stays subtle.",
+        "anti_patterns": "Avoid harsh black-on-white tech aesthetics and sterile card walls.",
+    },
+    "cinematic-bold": {
+        "summary": "Big, dramatic, high-impact direction for brands that need to feel aspirational, visual, and memorable fast.",
+        "ideal_for": ["restaurant", "event", "fitness", "entertainment", "general"],
+        "typography": "Bold display typography with sharp supporting sans.",
+        "palette": "Dark base with one strong accent and bright text contrast.",
+        "layout": "Immersive hero, oversized sections, assertive CTA moments, and bold image framing.",
+        "components": "Statement hero, punchy offer bands, oversized testimonials, and dramatic stat/proof modules.",
+        "motion": "Confident but restrained motion using opacity and transform only.",
+        "anti_patterns": "Do not introduce gradients, glassmorphism, or trendy AI hero effects.",
+    },
+    "crisp-trust": {
+        "summary": "Clean, premium trust-first direction for professional local businesses that must feel capable and expensive.",
+        "ideal_for": ["dentist", "legal", "medical", "accounting", "consulting"],
+        "typography": "Structured sans-serif hierarchy with occasional refined serif accenting.",
+        "palette": "Soft neutrals, deep slate, muted blue/green trust accents, and clean whitespace.",
+        "layout": "Clear problem-solution flow, strong proof modules, and service sections with excellent readability.",
+        "components": "Sticky CTA, comparison/proof bands, clean cards, trust badges, and FAQ/support sections.",
+        "motion": "Almost static; use only subtle polish.",
+        "anti_patterns": "Avoid generic SaaS icon grids and weak low-contrast gray body text.",
+    },
+    "craftsman-premium": {
+        "summary": "Solid, tactile, high-trust direction for trades and local services that need to feel skilled rather than templated.",
+        "ideal_for": ["plumber", "contractor", "electrician", "hvac", "landscaping"],
+        "typography": "Confident sans-serif hierarchy with selective slab or serif emphasis.",
+        "palette": "Bone, charcoal, metal, copper, rust, or deep service-color accents.",
+        "layout": "Strong hero promise, service proof blocks, before/after or process rhythm, and practical CTAs.",
+        "components": "Large CTA bars, service cards, testimonial slabs, process timeline, and coverage area sections.",
+        "motion": "Minimal and utility-focused.",
+        "anti_patterns": "Avoid cute startup illustrations, generic dashboard motifs, and tiny centered text blocks.",
+    },
+    "modern-approachable": {
+        "summary": "Fresh, airy, contemporary direction for small businesses that need clarity without feeling cold or templated.",
+        "ideal_for": ["general", "retail", "studio", "wellness", "service"],
+        "typography": "Readable modern sans with one distinctive accent face or typographic treatment.",
+        "palette": "Clean light base, controlled accent color, and soft contrast surfaces.",
+        "layout": "Balanced hero, modular content rhythm, friendly proof sections, and sharp CTA moments.",
+        "components": "Simple cards, image-text alternation, FAQ modules, and approachable callouts.",
+        "motion": "Light stagger and reveal only.",
+        "anti_patterns": "Avoid flat default Tailwind landing-page layouts and interchangeable hero copy.",
+    },
+}
+
+INDUSTRY_DEFAULT_FAMILIES = {
+    "restaurant": "editorial-luxury",
+    "cafe": "warm-hospitality",
+    "bakery": "warm-hospitality",
+    "bar": "cinematic-bold",
+    "hotel": "editorial-luxury",
+    "spa": "warm-hospitality",
+    "salon": "editorial-luxury",
+    "plumber": "craftsman-premium",
+    "electrician": "craftsman-premium",
+    "hvac": "craftsman-premium",
+    "contractor": "craftsman-premium",
+    "dentist": "crisp-trust",
+    "medical": "crisp-trust",
+    "legal": "crisp-trust",
+    "consulting": "crisp-trust",
+    "retail": "modern-approachable",
+    "wellness": "modern-approachable",
+    "general": "modern-approachable",
+}
+
+ALLOWED_DESIGN_FAMILIES = set(DESIGN_FAMILY_LIBRARY)
 
 JOBS_DIR = ROOT / "jobs"
 PREVIEWS_DIR = ROOT / "previews"
@@ -224,196 +307,153 @@ def truncate_text(value: str, limit: int = 1800) -> str:
     return value[: limit - 3].rstrip() + "..."
 
 
-def capture_site_screenshots(output_dir: Path, url: str, label: str) -> dict:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    captures = {
-        "desktop": output_dir / f"{label}-desktop.png",
-        "mobile": output_dir / f"{label}-mobile.png",
-    }
-    capture_log = output_dir / f"{label}-screenshot.log"
-    log_chunks: list[str] = []
-    results: dict[str, str] = {}
+def normalize_design_family(value: str) -> str:
+    normalized = slugify(value)
+    if normalized not in ALLOWED_DESIGN_FAMILIES:
+        raise ValueError(f"design_family must be one of: {', '.join(sorted(ALLOWED_DESIGN_FAMILIES))}")
+    return normalized
 
-    for device_name, output_path in (
-        ("Desktop Chrome", captures["desktop"]),
-        ("iPhone 13", captures["mobile"]),
-    ):
-        cmd = [
-            "node",
-            "/app/app/capture_screenshot.mjs",
-            url,
-            str(output_path),
-            device_name,
+
+def summarize_value_list(items: list[str], fallback: str = "None") -> str:
+    filtered = [item for item in items if item]
+    return ", ".join(filtered) if filtered else fallback
+
+
+def default_section_flow(industry: str, family_key: str) -> list[str]:
+    if industry == "restaurant":
+        if family_key == "editorial-luxury":
+            return [
+                "Atmospheric hero with reservation-first CTA",
+                "Signature positioning and story band",
+                "Image-led menu highlights",
+                "Ambience gallery or social proof strip",
+                "Location, hours, and reservation close",
+            ]
+        return [
+            "Warm hero with primary CTA",
+            "Trust/story introduction",
+            "Menu or service highlights",
+            "Photo-led proof or testimonials",
+            "Visit/contact close",
         ]
-        result = run_command(cmd, timeout=SCREENSHOT_CAPTURE_TIMEOUT)
-        log_chunks.append(
-            "\n".join(
-                [
-                    f"[{device_name}] exit_code={result.returncode}",
-                    f"STDOUT:\n{result.stdout}",
-                    f"STDERR:\n{result.stderr}",
-                ]
-            )
-        )
-        if result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 0:
-            results[device_name.lower().replace(" ", "_")] = str(output_path)
+    if family_key == "craftsman-premium":
+        return [
+            "Outcome-led hero with phone/quote CTA",
+            "Why choose us proof strip",
+            "Service cards or problem-solution blocks",
+            "Process / before-after / testimonials",
+            "Coverage area and strong close",
+        ]
+    if family_key == "crisp-trust":
+        return [
+            "Authority-led hero with primary CTA",
+            "Trust metrics and proof",
+            "Service overview and differentiators",
+            "Testimonials / FAQ",
+            "Consultation or contact close",
+        ]
+    return [
+        "Distinctive hero with clear CTA",
+        "Value proposition and business story",
+        "Services or featured offerings",
+        "Proof / testimonials / imagery",
+        "Conversion-focused closing section",
+    ]
 
-    capture_log.write_text("\n\n".join(log_chunks), encoding="utf-8")
+
+def infer_conversion_priority(industry: str) -> list[str]:
+    if industry == "restaurant":
+        return ["reservations", "location-and-hours", "menu-confidence"]
+    if industry in {"plumber", "electrician", "hvac", "contractor"}:
+        return ["call-now", "quote-request", "trust-and-coverage"]
+    if industry in {"dentist", "medical", "legal", "consulting"}:
+        return ["consultation", "credibility", "service-clarity"]
+    return ["primary-cta", "trust", "clarity"]
+
+
+def select_design_family(request: dict, business_profile: dict, source_summary: dict) -> dict:
+    explicit = request.get("design_family")
+    if explicit:
+        profile = DESIGN_FAMILY_LIBRARY[explicit]
+        return {
+            "family": explicit,
+            "source": "operator",
+            "rationale": f"Operator explicitly selected {explicit}.",
+            "profile": profile,
+        }
+
+    text = " ".join(
+        [
+            request.get("design_goal", ""),
+            request.get("brand_notes", ""),
+            source_summary.get("title", ""),
+            source_summary.get("description", ""),
+            business_profile.get("business_name", ""),
+            " ".join(business_profile.get("core_highlights", [])),
+        ]
+    ).lower()
+
+    family = INDUSTRY_DEFAULT_FAMILIES.get(request["industry"], "modern-approachable")
+    rationale = [f"default for industry={request['industry']}"]
+
+    if any(term in text for term in ("luxury", "premium", "editorial", "fine dining", "steak", "cocktail", "hotel")):
+        family = "editorial-luxury"
+        rationale.append("language suggests premium/editorial positioning")
+    elif any(term in text for term in ("warm", "cozy", "family", "neighborhood", "cafe", "bakery", "welcoming")):
+        family = "warm-hospitality"
+        rationale.append("language suggests warm hospitality positioning")
+    elif any(term in text for term in ("bold", "cinematic", "dramatic", "immersive", "nightlife")):
+        family = "cinematic-bold"
+        rationale.append("language suggests dramatic visual direction")
+    elif request["industry"] in {"plumber", "electrician", "hvac", "contractor"}:
+        family = "craftsman-premium"
+        rationale.append("local trade service prioritizes practical premium trust")
+    elif request["industry"] in {"dentist", "medical", "legal", "consulting"}:
+        family = "crisp-trust"
+        rationale.append("professional service benefits from clean trust-first direction")
+
     return {
-        "desktop": str(captures["desktop"]) if captures["desktop"].exists() else "",
-        "mobile": str(captures["mobile"]) if captures["mobile"].exists() else "",
-        "log": str(capture_log),
-        "successful": [name for name, path in results.items() if path],
+        "family": family,
+        "source": "inferred",
+        "rationale": "; ".join(rationale),
+        "profile": DESIGN_FAMILY_LIBRARY[family],
     }
 
 
-def image_to_hex(rgb: tuple[int, int, int]) -> str:
-    return "#{:02x}{:02x}{:02x}".format(*rgb)
-
-
-def classify_brightness(value: float) -> str:
-    if value < 70:
-        return "dark"
-    if value < 150:
-        return "balanced"
-    return "light"
-
-
-def classify_contrast(value: float) -> str:
-    if value < 35:
-        return "soft"
-    if value < 70:
-        return "moderate"
-    return "high"
-
-
-def classify_saturation(value: float) -> str:
-    if value < 0.18:
-        return "muted"
-    if value < 0.4:
-        return "restrained"
-    return "vivid"
-
-
-def estimate_horizontal_bands(img) -> int:
-    width, height = img.size
-    step = max(1, height // 180)
-    samples = []
-    for y in range(0, height, step):
-        row = img.crop((0, y, width, min(height, y + step)))
-        r, g, b = row.resize((1, 1)).getpixel((0, 0))
-        samples.append((r + g + b) / 3)
-    if len(samples) < 2:
-        return 0
-    transitions = 0
-    prev = samples[0]
-    for current in samples[1:]:
-        if abs(current - prev) >= 18:
-            transitions += 1
-        prev = current
-    return transitions
-
-
-def analyze_screenshot_visuals(image_path: Path) -> dict:
-    from PIL import Image, ImageStat
-
-    with Image.open(image_path) as img:
-        img = img.convert("RGB")
-        width, height = img.size
-        thumb = img.resize((max(24, min(160, width // 10)), max(24, min(240, height // 10))))
-        quantized = thumb.quantize(colors=6, method=Image.Quantize.MEDIANCUT).convert("RGB")
-        thumb_pixels = list(thumb.getdata())
-        color_counts: dict[str, int] = {}
-        for pixel in quantized.getdata():
-            key = image_to_hex(pixel)
-            color_counts[key] = color_counts.get(key, 0) + 1
-        palette = [color for color, _ in sorted(color_counts.items(), key=lambda item: (-item[1], item[0]))[:6]]
-
-        stat = ImageStat.Stat(thumb)
-        means = stat.mean[:3]
-        stddev = stat.stddev[:3]
-        luminance = 0.2126 * means[0] + 0.7152 * means[1] + 0.0722 * means[2]
-        contrast = sum(stddev) / len(stddev)
-
-        hsv_values = [rgb_to_hsv(*(channel / 255 for channel in pixel)) for pixel in thumb_pixels]
-        avg_saturation = sum(item[1] for item in hsv_values) / max(1, len(hsv_values))
-        warm_pixels = 0
-        for pixel in thumb_pixels:
-            r, g, b = pixel
-            if r > b + 18 and r >= g:
-                warm_pixels += 1
-        warm_ratio = warm_pixels / max(1, len(thumb_pixels))
-        bands = estimate_horizontal_bands(thumb)
-        aspect = width / max(1, height)
-
-    mood_signals = []
-    brightness_mode = classify_brightness(luminance)
-    if brightness_mode == "dark":
-        mood_signals.append("dark visual base")
-    elif brightness_mode == "light":
-        mood_signals.append("light airy base")
-    if classify_contrast(contrast) == "high":
-        mood_signals.append("high contrast framing")
-    if classify_saturation(avg_saturation) == "muted":
-        mood_signals.append("muted color restraint")
-    elif classify_saturation(avg_saturation) == "vivid":
-        mood_signals.append("vivid color accents")
-    if warm_ratio >= 0.42:
-        mood_signals.append("warm photographic tone")
-    if bands >= 5:
-        mood_signals.append("strong vertical section rhythm")
-    if aspect < 0.55:
-        mood_signals.append("long-scroll editorial pacing")
+def build_concept_blueprint(request: dict, business_profile: dict, source_summary: dict, design_engine: dict, source_assets: list[dict]) -> dict:
+    family_key = design_engine["family"]
+    profile = design_engine["profile"]
+    section_flow = default_section_flow(request["industry"], family_key)
+    conversion_priority = infer_conversion_priority(request["industry"])
+    source_title = source_summary.get("title", "").split("-")[0].strip()
+    business_name = business_profile.get("business_name") or source_title or request["hostname"]
+    image_policy = (
+        "Preserve and elevate source imagery where credible, then supplement with premium editorial imagery only if needed."
+        if request["allow_external_images"]
+        else "Work entirely from source assets, typography, color, and layout rather than adding external imagery."
+    )
+    if request["image_strategy"] == "source-only":
+        image_policy = "Use only source imagery and logo assets; the design must win through composition and typography."
+    elif request["image_strategy"] == "stock-first":
+        image_policy = "Use polished editorial imagery as the dominant visual layer while preserving any usable brand marks."
 
     return {
-        "path": str(image_path),
-        "size": {"width": width, "height": height},
-        "palette": palette,
-        "brightness_mode": brightness_mode,
-        "contrast_level": classify_contrast(contrast),
-        "saturation_level": classify_saturation(avg_saturation),
-        "warmth_ratio": round(warm_ratio, 3),
-        "section_bands": bands,
-        "mood_signals": mood_signals,
+        "business_name": business_name,
+        "family": family_key,
+        "creative_thesis": request.get("design_goal") or profile["summary"],
+        "family_summary": profile["summary"],
+        "typography_system": profile["typography"],
+        "color_logic": profile["palette"],
+        "layout_system": profile["layout"],
+        "component_language": profile["components"],
+        "motion_policy": profile["motion"],
+        "anti_patterns": profile["anti_patterns"],
+        "section_flow": section_flow,
+        "conversion_priority": conversion_priority,
+        "image_policy": image_policy,
+        "asset_strength": "strong" if len(source_assets) >= 6 else ("moderate" if len(source_assets) >= 3 else "weak"),
+        "content_focus": business_profile.get("core_highlights", [])[:5],
     }
-
-
-def capture_and_analyze_visuals(analysis_dir: Path, label: str, url: str) -> dict:
-    screenshots_dir = analysis_dir / "screenshots"
-    capture = capture_site_screenshots(screenshots_dir, url, label)
-    visual_summary: dict[str, dict] = {}
-    for key in ("desktop", "mobile"):
-        path_value = capture.get(key)
-        if not path_value:
-            continue
-        image_path = Path(path_value)
-        try:
-            visual_summary[key] = analyze_screenshot_visuals(image_path)
-        except Exception as exc:
-            visual_summary[key] = {"path": str(image_path), "error": str(exc)}
-    return {
-        "screenshots": capture,
-        "visual_summary": visual_summary,
-    }
-
-
-def normalize_reference_item(item) -> dict:
-    if isinstance(item, str):
-        url = item.strip()
-        focus = ""
-    elif isinstance(item, dict):
-        url = str(item.get("url", "")).strip()
-        focus = str(item.get("focus", "")).strip()
-    else:
-        raise ValueError("design_references entries must be strings or objects")
-
-    parsed = urlparse(url)
-    if not url:
-        raise ValueError("design_references entries must include a url")
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError(f"Invalid design reference URL: {url}")
-
-    return {"url": url, "focus": focus, "hostname": parsed.netloc}
 
 
 def normalize_request(payload: dict) -> dict:
@@ -425,12 +465,6 @@ def normalize_request(payload: dict) -> dict:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("website_url must be a valid http/https URL")
 
-    refs = payload.get("design_references", [])
-    if isinstance(refs, str):
-        refs = [line.strip() for line in refs.splitlines() if line.strip()]
-    elif not isinstance(refs, list):
-        raise ValueError("design_references must be an array or newline-delimited string")
-
     enabled_skills = payload.get("enabled_skills")
     if enabled_skills is None:
         normalized_skills = list(DEFAULT_SKILLS)
@@ -441,9 +475,9 @@ def normalize_request(payload: dict) -> dict:
     else:
         raise ValueError("enabled_skills must be an array or comma-delimited string")
 
-    normalized_refs = [normalize_reference_item(item) for item in refs if str(item).strip() or isinstance(item, dict)]
     client_slug = payload.get("client_slug") or parsed.netloc
     industry = slugify(str(payload.get("industry") or DEFAULT_INDUSTRY))
+    design_family_input = str(payload.get("design_family") or payload.get("template_family") or "").strip()
     generator_profile = str(payload.get("generator_profile") or "balanced").strip().lower()
     if generator_profile not in ALLOWED_GENERATOR_PROFILES:
         raise ValueError(f"generator_profile must be one of: {', '.join(sorted(ALLOWED_GENERATOR_PROFILES))}")
@@ -455,11 +489,6 @@ def normalize_request(payload: dict) -> dict:
         raise ValueError(
             f"source_expansion_mode must be one of: {', '.join(sorted(ALLOWED_SOURCE_EXPANSION_MODES))}"
         )
-    reference_limit = payload.get("reference_limit", MAX_REFERENCE_SITES)
-    try:
-        reference_limit = max(0, min(int(reference_limit), MAX_REFERENCE_SITES))
-    except Exception:
-        raise ValueError("reference_limit must be an integer")
     search_budget = payload.get("search_budget", 4)
     try:
         search_budget = max(0, min(int(search_budget), 8))
@@ -468,7 +497,6 @@ def normalize_request(payload: dict) -> dict:
 
     return {
         "website_url": website_url,
-        "design_references": normalized_refs,
         "client_slug": slugify(str(client_slug)),
         "brand_notes": str(payload.get("brand_notes", "")).strip(),
         "dry_run": bool(payload.get("dry_run", False)),
@@ -476,13 +504,13 @@ def normalize_request(payload: dict) -> dict:
         "callback_url": str(payload.get("callback_url", "")).strip(),
         "notify_email": str(payload.get("notify_email", "")).strip(),
         "industry": industry,
+        "design_family": normalize_design_family(design_family_input) if design_family_input else "",
         "enabled_skills": normalized_skills or list(DEFAULT_SKILLS),
         "extra_instructions": str(payload.get("extra_instructions", "")).strip(),
         "generator_profile": generator_profile,
         "image_strategy": image_strategy,
         "reuse_source_images": parse_bool(payload.get("reuse_source_images"), True),
         "allow_external_images": parse_bool(payload.get("allow_external_images"), True),
-        "reference_limit": reference_limit,
         "design_goal": str(payload.get("design_goal", "")).strip(),
         "prompt_append": str(payload.get("prompt_append", "")).strip(),
         "source_expansion_mode": source_expansion_mode,
@@ -754,222 +782,6 @@ def extract_asset_candidates(html: str, base_url: str) -> list[dict]:
     return candidates
 
 
-def fetch_text_url(url: str, timeout: int = 45) -> str:
-    request = Request(
-        url,
-        headers={"User-Agent": "Mozilla/5.0 (compatible; WebsiteRedesignBot/1.0)"},
-        method="GET",
-    )
-    with urlopen(request, timeout=timeout) as response:
-        return response.read().decode("utf-8", errors="replace")
-
-
-def extract_stylesheet_urls(html: str, base_url: str) -> list[str]:
-    urls: list[str] = []
-    seen: set[str] = set()
-    for match in re.finditer(r"<link[^>]+rel=[\"'][^\"']*stylesheet[^\"']*[\"'][^>]+href=[\"']([^\"']+)[\"']", html, flags=re.IGNORECASE):
-        href = match.group(1).strip()
-        if not href:
-            continue
-        full = urljoin(base_url, href)
-        if full in seen:
-            continue
-        seen.add(full)
-        urls.append(full)
-        if len(urls) >= 6:
-            break
-    return urls
-
-
-def parse_numeric_px_values(css_text: str, property_name: str) -> list[int]:
-    pattern = rf"{re.escape(property_name)}\s*:\s*([^;}}{{]+)"
-    values: list[int] = []
-    for match in re.finditer(pattern, css_text, flags=re.IGNORECASE):
-        chunk = match.group(1)
-        for token in re.findall(r"(\d+(?:\.\d+)?)px", chunk):
-            try:
-                values.append(int(round(float(token))))
-            except Exception:
-                continue
-    return values
-
-
-def summarize_numeric_scale(values: list[int]) -> str:
-    usable = sorted(v for v in values if v > 0)
-    if not usable:
-        return ""
-    uniques = sorted(set(usable))
-    if len(uniques) == 1:
-        return f"{uniques[0]}px"
-    top = uniques[:6]
-    return ", ".join(f"{item}px" for item in top)
-
-
-def summarize_font_role(fonts: list[str], fallback: str) -> str:
-    if fonts:
-        return fonts[0]
-    return fallback
-
-
-def detect_component_patterns(html: str, css_text: str) -> dict:
-    class_tokens = " ".join(re.findall(r'class=[\"\']([^\"\']+)[\"\']', html, flags=re.IGNORECASE))
-    button_rounding = parse_numeric_px_values(css_text, "border-radius")
-    rounded = max(button_rounding) if button_rounding else 0
-    button_style = "minimal"
-    if re.search(r"(?:btn|button)[^{]*\{[^}]*border-radius\s*:\s*(\d+)px", css_text, flags=re.IGNORECASE | re.DOTALL):
-        if rounded >= 32:
-            button_style = "pill"
-        elif rounded >= 12:
-            button_style = "soft rounded"
-        else:
-            button_style = "crisp rectangular"
-    hero_style = "editorial"
-    if re.search(r"(hero|banner)", class_tokens, flags=re.IGNORECASE):
-        hero_style = "explicit hero section"
-    if re.search(r"(split|two-column|grid-template-columns\s*:\s*[^;]*1fr[^;]*1fr)", css_text, flags=re.IGNORECASE):
-        hero_style = "split-layout hero"
-    header_style = "minimal"
-    if re.search(r"(sticky|position\s*:\s*fixed|position\s*:\s*sticky)", css_text, flags=re.IGNORECASE):
-        header_style = "sticky/fixed header"
-    elif re.search(r"<nav\b", html, flags=re.IGNORECASE):
-        header_style = "standard navigation header"
-    card_style = "light panels"
-    if re.search(r"box-shadow\s*:\s*[^;]+", css_text, flags=re.IGNORECASE):
-        card_style = "elevated cards/panels"
-    elif rounded >= 20:
-        card_style = "soft rounded surfaces"
-    return {
-        "header": header_style,
-        "hero": hero_style,
-        "buttons": button_style,
-        "cards": card_style,
-    }
-
-
-def extract_reference_blueprint(html: str, base_url: str, visual_brief: dict, screenshot_brief: dict) -> dict:
-    stylesheet_urls = visual_brief.get("stylesheet_urls", []) or []
-    css_chunks: list[str] = []
-    for stylesheet_url in stylesheet_urls[:4]:
-        try:
-            css_chunks.append(fetch_text_url(stylesheet_url, timeout=25))
-        except Exception:
-            continue
-    css_text = "\n".join(css_chunks)
-
-    fonts = visual_brief.get("fonts", []) or []
-    palette = (screenshot_brief.get("visual_summary", {}).get("desktop", {}) or {}).get("palette", []) or visual_brief.get("palette", []) or []
-    section_padding_values = parse_numeric_px_values(css_text, "padding")
-    gap_values = parse_numeric_px_values(css_text, "gap")
-    radius_values = parse_numeric_px_values(css_text, "border-radius")
-    max_width_values = parse_numeric_px_values(css_text, "max-width")
-    letter_spacing_values = re.findall(r"letter-spacing\s*:\s*([0-9.]+)em", css_text, flags=re.IGNORECASE)
-    uppercase_bias = bool(re.search(r"text-transform\s*:\s*uppercase", css_text, flags=re.IGNORECASE))
-
-    desktop_visual = screenshot_brief.get("visual_summary", {}).get("desktop", {}) or {}
-    mobile_visual = screenshot_brief.get("visual_summary", {}).get("mobile", {}) or {}
-
-    image_density = "high" if visual_brief.get("image_count", 0) >= max(6, visual_brief.get("heading_count", 0) * 2) else "moderate"
-    if visual_brief.get("image_count", 0) <= 2:
-        image_density = "low"
-
-    composition = "long-scroll editorial pacing" if desktop_visual.get("section_bands", 0) >= 12 else "compact section pacing"
-    if visual_brief.get("section_count", 0) >= 6:
-        composition = "modular long-scroll composition"
-
-    return {
-        "typography": {
-            "display_font": summarize_font_role(fonts[:1], "serif display"),
-            "body_font": summarize_font_role(fonts[1:2], fonts[0] if fonts else "clean sans"),
-            "uppercase_accents": uppercase_bias,
-            "letter_spacing_em": letter_spacing_values[:3],
-        },
-        "color_system": {
-            "palette": palette[:6],
-            "brightness": desktop_visual.get("brightness_mode", "unknown"),
-            "contrast": desktop_visual.get("contrast_level", "unknown"),
-            "saturation": desktop_visual.get("saturation_level", "unknown"),
-        },
-        "spacing": {
-            "section_padding_scale": summarize_numeric_scale([v for v in section_padding_values if v >= 24]),
-            "gap_scale": summarize_numeric_scale([v for v in gap_values if v >= 8]),
-            "radius_scale": summarize_numeric_scale([v for v in radius_values if v >= 4]),
-            "content_width_scale": summarize_numeric_scale([v for v in max_width_values if v >= 480]),
-        },
-        "components": detect_component_patterns(html, css_text),
-        "composition": {
-            "image_density": image_density,
-            "desktop_pacing": composition,
-            "mobile_pacing": "long-scroll mobile rhythm" if mobile_visual.get("section_bands", 0) >= 18 else "compact mobile rhythm",
-            "section_count": visual_brief.get("section_count", 0),
-        },
-    }
-
-
-def extract_visual_brief(html: str, base_url: str) -> dict:
-    stylesheet_urls = extract_stylesheet_urls(html, base_url)
-    css_chunks: list[str] = []
-    for stylesheet_url in stylesheet_urls[:4]:
-        try:
-            css_chunks.append(fetch_text_url(stylesheet_url, timeout=25))
-        except Exception:
-            continue
-    css_text = "\n".join(css_chunks)
-
-    font_matches = re.findall(r"font-family\s*:\s*([^;}{]+)", css_text, flags=re.IGNORECASE)
-    font_counts: dict[str, int] = {}
-    for match in font_matches:
-        for raw in match.split(","):
-            family = raw.strip().strip("'\"")
-            if not family or family.lower() in {"serif", "sans-serif", "system-ui", "inherit"}:
-                continue
-            font_counts[family] = font_counts.get(family, 0) + 1
-    fonts = [name for name, _ in sorted(font_counts.items(), key=lambda item: (-item[1], item[0]))[:5]]
-
-    colors = re.findall(r"#[0-9a-fA-F]{3,8}\b", css_text)
-    color_counts: dict[str, int] = {}
-    for color in colors:
-        normalized = color.lower()
-        color_counts[normalized] = color_counts.get(normalized, 0) + 1
-    palette = [name for name, _ in sorted(color_counts.items(), key=lambda item: (-item[1], item[0]))[:6]]
-
-    heading_count = len(re.findall(r"<h[1-4]\b", html, flags=re.IGNORECASE))
-    image_count = len(re.findall(r"<img\b", html, flags=re.IGNORECASE))
-    section_count = len(re.findall(r"<section\b", html, flags=re.IGNORECASE))
-    nav_present = bool(re.search(r"<nav\b", html, flags=re.IGNORECASE))
-    buttonish = len(re.findall(r"(?:button|btn|cta)", html, flags=re.IGNORECASE))
-
-    radius_values = [int(v) for v in re.findall(r"border-radius\s*:\s*(\d+)px", css_text, flags=re.IGNORECASE)]
-    generous_spacing = len(re.findall(r"padding(?:-[a-z]+)?\s*:\s*(?:[3-9]\d|\d{3,})px", css_text, flags=re.IGNORECASE))
-    dark_bias = bool(re.search(r"background(?:-color)?\s*:\s*#(?:0[0-9a-f]{2}|1[0-9a-f]{2}|2[0-9a-f]{2}|3[0-9a-f]{2})", css_text, flags=re.IGNORECASE))
-    uppercase_bias = bool(re.search(r"text-transform\s*:\s*uppercase", css_text, flags=re.IGNORECASE))
-
-    mood = []
-    if dark_bias:
-        mood.append("dark or moody contrast")
-    if generous_spacing > 10:
-        mood.append("generous spacing")
-    if image_count >= max(4, heading_count):
-        mood.append("image-led composition")
-    if radius_values and max(radius_values) >= 20:
-        mood.append("soft rounded surfaces")
-    if uppercase_bias:
-        mood.append("editorial uppercase accents")
-    if nav_present:
-        mood.append("clear hospitality-style navigation")
-
-    return {
-        "fonts": fonts,
-        "palette": palette,
-        "heading_count": heading_count,
-        "image_count": image_count,
-        "section_count": section_count,
-        "nav_present": nav_present,
-        "cta_density": buttonish,
-        "mood_signals": mood,
-        "stylesheet_urls": stylesheet_urls,
-    }
-
-
 def fetch_source_html(job_dir: Path, request: dict) -> dict:
     source_root = job_dir / "source"
     source_root.mkdir(parents=True, exist_ok=True)
@@ -1015,9 +827,10 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
 
     result: dict = {
         "source": None,
-        "references": [],
         "enrichment": {"results": []},
         "business_profile": {},
+        "design_engine": {},
+        "concept_blueprint": {},
     }
 
     try:
@@ -1049,11 +862,6 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
     source_summary = result["source"].get("summary", {}) if isinstance(result["source"], dict) else {}
     source_assets = result["source"].get("asset_candidates", []) if isinstance(result["source"], dict) else []
     top_links = source_summary.get("top_links", []) if isinstance(source_summary, dict) else []
-    try:
-        source_visuals = capture_and_analyze_visuals(analysis_dir, "source", request["website_url"])
-        result["source"]["visuals"] = source_visuals
-    except Exception as exc:
-        result["source"]["visuals"] = {"error": str(exc)}
     completeness = score_source_completeness(source_summary, source_assets, top_links)
     result["source"]["completeness"] = completeness
 
@@ -1077,55 +885,29 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
         encoding="utf-8",
     )
 
-    for index, reference in enumerate(request["design_references"][: request["reference_limit"]], start=1):
-        slug = slugify(reference["hostname"])
-        try:
-            ref_analysis = analyze_with_firecrawl(reference["url"], include_map=False)
-            ref_html = ref_analysis["scrape"].get("data", {}).get("html", "")
-            ref_assets = extract_asset_candidates(ref_html, reference["url"])
-            visual_brief = extract_visual_brief(ref_html, reference["url"])
-            screenshot_brief = capture_and_analyze_visuals(analysis_dir, f"reference-{index:02d}-{slug}", reference["url"])
-            reference_blueprint = extract_reference_blueprint(ref_html, reference["url"], visual_brief, screenshot_brief)
-            payload = {
-                "reference": reference,
-                "analysis": ref_analysis,
-                "asset_candidates": ref_assets,
-                "visual_brief": visual_brief,
-                "screenshot_brief": screenshot_brief,
-                "reference_blueprint": reference_blueprint,
-            }
-            output_file = analysis_dir / f"reference-{index:02d}-{slug}.json"
-            output_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-            result["references"].append(
-                {
-                    "url": reference["url"],
-                    "focus": reference["focus"],
-                    "analysis_file": str(output_file),
-                    "summary": ref_analysis["summary"],
-                    "asset_candidates": ref_assets,
-                    "visual_brief": visual_brief,
-                    "screenshot_brief": screenshot_brief,
-                    "reference_blueprint": reference_blueprint,
-                }
-            )
-        except Exception as exc:
-            result["references"].append(
-                {
-                    "url": reference["url"],
-                    "focus": reference["focus"],
-                    "error": str(exc),
-                }
-            )
+    result["design_engine"] = select_design_family(request, result["business_profile"], source_summary)
+    result["concept_blueprint"] = build_concept_blueprint(
+        request,
+        result["business_profile"],
+        source_summary,
+        result["design_engine"],
+        source_assets,
+    )
+    (analysis_dir / "design-engine.json").write_text(json.dumps(result["design_engine"], indent=2), encoding="utf-8")
+    (analysis_dir / "concept-blueprint.json").write_text(
+        json.dumps(result["concept_blueprint"], indent=2),
+        encoding="utf-8",
+    )
 
     return result
 
 
 def profile_limits(profile: str) -> dict:
     if profile == "lean":
-        return {"source_chars": 420, "reference_chars": 140, "links": 4, "assets": 4, "enrichment_chars": 120}
+        return {"source_chars": 420, "links": 4, "assets": 4, "enrichment_chars": 120}
     if profile == "quality":
-        return {"source_chars": 700, "reference_chars": 220, "links": 8, "assets": 8, "enrichment_chars": 180}
-    return {"source_chars": 560, "reference_chars": 180, "links": 6, "assets": 6, "enrichment_chars": 150}
+        return {"source_chars": 700, "links": 8, "assets": 8, "enrichment_chars": 180}
+    return {"source_chars": 560, "links": 6, "assets": 6, "enrichment_chars": 150}
 
 
 def render_asset_guidance(request: dict, source_assets: list[dict]) -> str:
@@ -1166,94 +948,12 @@ def build_prompt_parts(request: dict, job_dir: Path) -> tuple[dict, list[str]]:
     source_context = request.get("source_context") or {}
     source = source_context.get("source", {})
     source_summary = source.get("summary", {})
-    ref_contexts = source_context.get("references", [])
     enrichment = source_context.get("enrichment", {})
     business_profile = source_context.get("business_profile", {})
+    design_engine = source_context.get("design_engine", {})
+    concept_blueprint = source_context.get("concept_blueprint", {})
     limits = profile_limits(request["generator_profile"])
     source_assets = source.get("asset_candidates", []) or []
-    source_visuals = source.get("visuals", {}) if isinstance(source, dict) else {}
-    source_desktop_visual = source_visuals.get("visual_summary", {}).get("desktop", {}) or {}
-
-    ref_lines = []
-    blueprint_lines = []
-    for item in ref_contexts:
-        visual = item.get("visual_brief", {}) or {}
-        screenshot_brief = item.get("screenshot_brief", {}) or {}
-        blueprint = item.get("reference_blueprint", {}) or {}
-        desktop_visual = screenshot_brief.get("visual_summary", {}).get("desktop", {}) or {}
-        mobile_visual = screenshot_brief.get("visual_summary", {}).get("mobile", {}) or {}
-        visual_lines = []
-        if visual.get("fonts"):
-            visual_lines.append(f"  Fonts: {', '.join(visual['fonts'][:4])}")
-        if visual.get("palette"):
-            visual_lines.append(f"  Palette cues: {', '.join(visual['palette'][:5])}")
-        if visual.get("mood_signals"):
-            visual_lines.append(f"  Mood signals: {', '.join(visual['mood_signals'][:5])}")
-        if visual:
-            visual_lines.append(
-                f"  Structure cues: sections={visual.get('section_count', 0)}, images={visual.get('image_count', 0)}, headings={visual.get('heading_count', 0)}, nav={visual.get('nav_present', False)}"
-            )
-        if desktop_visual:
-            visual_lines.append(
-                f"  Desktop snapshot: brightness={desktop_visual.get('brightness_mode', 'unknown')}, contrast={desktop_visual.get('contrast_level', 'unknown')}, saturation={desktop_visual.get('saturation_level', 'unknown')}, palette={', '.join(desktop_visual.get('palette', [])[:5]) or 'none'}, bands={desktop_visual.get('section_bands', 0)}"
-            )
-            if desktop_visual.get("mood_signals"):
-                visual_lines.append(f"  Desktop mood: {', '.join(desktop_visual.get('mood_signals', [])[:5])}")
-        if mobile_visual:
-            visual_lines.append(
-                f"  Mobile snapshot: brightness={mobile_visual.get('brightness_mode', 'unknown')}, contrast={mobile_visual.get('contrast_level', 'unknown')}, saturation={mobile_visual.get('saturation_level', 'unknown')}, palette={', '.join(mobile_visual.get('palette', [])[:5]) or 'none'}, bands={mobile_visual.get('section_bands', 0)}"
-            )
-            if mobile_visual.get("mood_signals"):
-                visual_lines.append(f"  Mobile mood: {', '.join(mobile_visual.get('mood_signals', [])[:5])}")
-        if item.get("summary"):
-            summary = item["summary"]
-            reference_chars_limit = limits["reference_chars"]
-            if desktop_visual or mobile_visual:
-                reference_chars_limit = min(reference_chars_limit, 160)
-            if blueprint:
-                reference_chars_limit = min(reference_chars_limit, 110)
-            ref_lines.append(
-                "\n".join(
-                    [
-                        f"- URL: {item['url']}",
-                        f"  Focus: {item.get('focus') or 'General visual direction'}",
-                        f"  Title: {summary.get('title', '')}",
-                        *visual_lines,
-                        f"  Content notes: {truncate_text(summary.get('markdown_excerpt', ''), reference_chars_limit)}",
-                    ]
-                )
-            )
-        else:
-            ref_lines.append(
-                "\n".join(
-                    [
-                        f"- URL: {item['url']}",
-                        f"  Focus: {item.get('focus') or 'General visual direction'}",
-                        *visual_lines,
-                        f"  Analysis status: {item.get('error', 'Not analyzed')}",
-                    ]
-                )
-            )
-
-        if blueprint:
-            typography = blueprint.get("typography", {}) or {}
-            color_system = blueprint.get("color_system", {}) or {}
-            spacing = blueprint.get("spacing", {}) or {}
-            components = blueprint.get("components", {}) or {}
-            composition = blueprint.get("composition", {}) or {}
-            blueprint_lines.append(
-                "\n".join(
-                    [
-                        f"- URL: {item['url']}",
-                        f"  Blueprint focus: {item.get('focus') or 'General visual direction'}",
-                        f"  Typography: display={typography.get('display_font', 'unknown')}, body={typography.get('body_font', 'unknown')}, uppercase_accents={typography.get('uppercase_accents', False)}",
-                        f"  Color system: palette={', '.join(color_system.get('palette', [])[:5]) or 'none'}, brightness={color_system.get('brightness', 'unknown')}, contrast={color_system.get('contrast', 'unknown')}, saturation={color_system.get('saturation', 'unknown')}",
-                        f"  Spacing system: section_padding={spacing.get('section_padding_scale', 'unknown')}, gaps={spacing.get('gap_scale', 'unknown')}, radius={spacing.get('radius_scale', 'unknown')}, content_width={spacing.get('content_width_scale', 'unknown')}",
-                        f"  Components: header={components.get('header', 'unknown')}, hero={components.get('hero', 'unknown')}, buttons={components.get('buttons', 'unknown')}, cards={components.get('cards', 'unknown')}",
-                        f"  Composition: image_density={composition.get('image_density', 'unknown')}, desktop_pacing={composition.get('desktop_pacing', 'unknown')}, mobile_pacing={composition.get('mobile_pacing', 'unknown')}, sections={composition.get('section_count', 0)}",
-                    ]
-                )
-            )
 
     skill_files = resolve_skill_files(request)
     skill_names = [path.stem for path in skill_files]
@@ -1275,16 +975,18 @@ Skill directives:
 """
 
     design_guardrails = """Pre-generation design guardrails:
-- Do not use overused default fonts like Inter, Roboto, Open Sans, Lato, Montserrat, or Arial as the primary personality font unless the reference blueprint explicitly requires them.
+- Do not use overused default fonts like Inter, Roboto, Open Sans, Lato, Montserrat, or Arial as the primary personality font unless the selected design family explicitly calls for them.
 - Do not use gradient text, decorative background-clip text, or flashy AI-tell effects.
 - Ensure body text and CTA text clearly exceed WCAG AA contrast; do not leave near-failing warm-on-cream combinations.
 - Do not animate layout properties like width, height, padding, or margin. Prefer transform and opacity.
 - Avoid uppercase for long body copy; reserve it for short labels only.
-- Avoid generic SaaS hero composition. The first draft should already feel editorial and reference-led.
+- Avoid generic SaaS hero composition, default Tailwind landing-page stacking, and interchangeable startup polish.
+- Build the first draft from the internal design family and concept blueprint. Do not rely on copied public-site patterns.
 """
 
     operator_controls = f"""Operator controls:
 - Industry: {request['industry']}
+- Design family: {design_engine.get('family') or request.get('design_family') or 'auto'}
 - Generator profile: {request['generator_profile']}
 - Source expansion mode: {request['source_expansion_mode']}
 - Search enrichment: {request['search_enrichment']}
@@ -1313,20 +1015,40 @@ Skill directives:
 - Completeness score: {source.get('completeness', {}).get('score', 0.0):.2f}
 - Completeness notes:
 {chr(10).join(f"  - {item}" for item in source.get('completeness', {}).get('reasons', [])) or '  - None'}
-    - Source summary:
+- Source summary:
 {truncate_text(source_summary.get('markdown_excerpt', '') or 'No Firecrawl summary captured.', min(limits['source_chars'], 500 if source.get('completeness', {}).get('score', 0.0) >= 0.7 else limits['source_chars']))}
 - Important discovered links:
 {chr(10).join(f"  - {link}" for link in source_summary.get('top_links', [])[:limits['links']]) or '  - None'}
-- Source visual cues:
-  - brightness={source_desktop_visual.get('brightness_mode', 'unknown') if isinstance(source_desktop_visual, dict) else 'unknown'}
-  - contrast={source_desktop_visual.get('contrast_level', 'unknown') if isinstance(source_desktop_visual, dict) else 'unknown'}
-  - saturation={source_desktop_visual.get('saturation_level', 'unknown') if isinstance(source_desktop_visual, dict) else 'unknown'}
-  - palette={', '.join(source_desktop_visual.get('palette', [])[:5]) if isinstance(source_desktop_visual, dict) and source_desktop_visual.get('palette') else 'none'}
-  - mood={', '.join(source_desktop_visual.get('mood_signals', [])[:5]) if isinstance(source_desktop_visual, dict) and source_desktop_visual.get('mood_signals') else 'none'}
+- Source asset strength: {concept_blueprint.get('asset_strength', 'unknown')}
 """
 
-    reference_block = "Design references:\n" + ("\n".join(ref_lines) if ref_lines else "- None supplied")
-    reference_blueprint_block = "Reference design blueprint:\n" + ("\n".join(blueprint_lines) if blueprint_lines else "- No blueprint extracted")
+    design_family_block = f"""Internal design family:
+- Family: {design_engine.get('family', 'modern-approachable')}
+- Selection source: {design_engine.get('source', 'inferred')}
+- Rationale: {design_engine.get('rationale', 'No rationale recorded')}
+- Summary: {design_engine.get('profile', {}).get('summary', '')}
+- Typography direction: {design_engine.get('profile', {}).get('typography', '')}
+- Palette logic: {design_engine.get('profile', {}).get('palette', '')}
+- Layout direction: {design_engine.get('profile', {}).get('layout', '')}
+- Component language: {design_engine.get('profile', {}).get('components', '')}
+- Motion rule: {design_engine.get('profile', {}).get('motion', '')}
+- Family anti-patterns: {design_engine.get('profile', {}).get('anti_patterns', '')}
+"""
+
+    concept_blueprint_block = f"""Concept blueprint:
+- Creative thesis: {concept_blueprint.get('creative_thesis', '')}
+- Family summary: {concept_blueprint.get('family_summary', '')}
+- Typography system: {concept_blueprint.get('typography_system', '')}
+- Color logic: {concept_blueprint.get('color_logic', '')}
+- Layout system: {concept_blueprint.get('layout_system', '')}
+- Component language: {concept_blueprint.get('component_language', '')}
+- Motion policy: {concept_blueprint.get('motion_policy', '')}
+- Image policy: {concept_blueprint.get('image_policy', '')}
+- Conversion priorities: {summarize_value_list(concept_blueprint.get('conversion_priority', []))}
+- Content focus: {summarize_value_list(concept_blueprint.get('content_focus', []))}
+- Section flow:
+{chr(10).join(f"  - {item}" for item in concept_blueprint.get('section_flow', [])) or '  - None defined'}
+"""
     enrichment_lines = []
     for item in enrichment.get("results", [])[: request["search_budget"]]:
         enrichment_lines.append(
@@ -1346,16 +1068,15 @@ Skill directives:
     asset_block = "Image and asset strategy:\n" + render_asset_guidance(request, source_assets)
 
     implementation_block = """Implementation expectations:
-- Use the design references for layout, typography, spacing, rhythm, and visual tone, but do not copy branding directly.
-- Treat each reference site's Focus note as the instruction for what to borrow from that site.
-- Match the dominant reference site's visual system deliberately: typography feel, spacing scale, image density, and section cadence should be recognizably inspired by it.
-- Use the reference design blueprint as a concrete system, not just loose inspiration. Re-express the source business in that structural and component language.
-- Copy reusable design mechanics from the reference where appropriate: container widths, section cadence, serif/sans relationship, button silhouette, card softness, and header/hero treatment.
-- Use the screenshot-derived visual cues from the reference to shape the page mood, visual density, and pacing, not just the reference text summary.
+- Use the internal design family and concept blueprint as the dominant visual system.
+- The source website is for business facts, proof, usable assets, and service/menu details, not for visual inspiration.
+- Do not imitate or scrape public reference websites. Create a bespoke concept from the internal design family.
+- Re-express the source business in the selected family’s typography, spacing, component language, and section rhythm.
+- The first draft should already feel art-directed and prospect-ready, not like a template adaptation.
 - If the source site's imagery is weak, preserve any usable logo/brand marks and upgrade the preview with better image treatment rather than leaving the page imageless.
 - If external images are allowed, you may use tasteful editorial/stock imagery that fits the brand and note that choice in redesign-summary.md.
 - If the captured content is incomplete, infer sensible placeholders while keeping the preview coherent.
-- Avoid generic AI landing-page patterns, default fonts, and flat section stacking.
+- Avoid generic AI landing-page patterns, default fonts, flat section stacking, and startup-style feature grids.
 """
 
     parts = {
@@ -1364,8 +1085,8 @@ Skill directives:
         "operator_controls": operator_controls,
         "business_profile": business_profile_block,
         "source_context": source_context_block,
-        "reference_context": reference_block,
-        "reference_blueprint": reference_blueprint_block,
+        "design_family": design_family_block,
+        "concept_blueprint": concept_blueprint_block,
         "external_enrichment": enrichment_block,
         "asset_strategy": asset_block,
         "implementation_expectations": implementation_block,
@@ -1389,8 +1110,8 @@ def write_prompt_diagnostics(job_dir: Path, parts: dict, request: dict) -> dict:
         total_tokens += tokens
 
     suggestions: list[str] = []
-    if per_part.get("reference_context", {}).get("estimated_tokens", 0) > 450:
-        suggestions.append("Reduce `reference_limit` or tighten reference content notes further.")
+    if per_part.get("design_family", {}).get("estimated_tokens", 0) > 240 or per_part.get("concept_blueprint", {}).get("estimated_tokens", 0) > 320:
+        suggestions.append("Tighten the internal family/blueprint prose so the concept stays structured without bloating the first-pass prompt.")
     if per_part.get("external_enrichment", {}).get("estimated_tokens", 0) > 220:
         suggestions.append("Lower `search_budget` or disable enrichment when source completeness is already high.")
     if per_part.get("source_context", {}).get("estimated_tokens", 0) > 320:
@@ -1421,6 +1142,9 @@ def build_prompt(request: dict, job_dir: Path) -> tuple[str, list[str]]:
 def create_dry_run_preview(job_dir: Path, request: dict, applied_skills: list[str]) -> None:
     dist = job_dir / "dist"
     dist.mkdir(parents=True, exist_ok=True)
+    source_context = request.get("source_context") or {}
+    design_engine = source_context.get("design_engine", {})
+    concept_blueprint = source_context.get("concept_blueprint", {})
     index_html = f"""<!doctype html>
 <html lang="en">
   <head>
@@ -1489,9 +1213,10 @@ def create_dry_run_preview(job_dir: Path, request: dict, applied_skills: list[st
         <ul>
           <li>Source URL: {request["website_url"]}</li>
           <li>Industry: {request["industry"]}</li>
+          <li>Design family: {design_engine.get("family", request.get("design_family") or "auto")}</li>
           <li>Skills: {", ".join(applied_skills) or "None"}</li>
-          <li>References: {", ".join(item["url"] for item in request["design_references"]) or "None"}</li>
         </ul>
+        <p>Section flow: {", ".join(concept_blueprint.get("section_flow", [])[:3]) or "Not yet generated"}.</p>
       </section>
     </main>
   </body>
@@ -1597,7 +1322,7 @@ Fix these Impeccable findings:
 
 Requirements:
 - Prioritize accessibility, typography quality, visual hierarchy, spacing rhythm, and anti-generic design issues.
-- Keep the existing reference-led mood intact.
+- Keep the existing design-family-led concept intact.
 - Make the smallest set of edits that materially improves the result.
 - Fully resolve every listed finding, not just some of them.
 - Do not replace one low-contrast issue with another. If the background is bright or multicolored, use dark text or add a dark surface behind the text.
@@ -1834,6 +1559,7 @@ class Handler(BaseHTTPRequestHandler):
                     "firecrawl_url": FIRECRAWL_URL,
                     "model_policy": "deny-openrouter",
                     "generator_profiles": sorted(ALLOWED_GENERATOR_PROFILES),
+                    "design_families": sorted(ALLOWED_DESIGN_FAMILIES),
                     "image_strategies": sorted(ALLOWED_IMAGE_STRATEGIES),
                     "skills": list_available_skills(),
                 }

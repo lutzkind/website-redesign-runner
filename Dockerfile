@@ -5,8 +5,7 @@ WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 
 RUN pip install --no-cache-dir -r /app/requirements.txt
-RUN npm install -g opencode-ai@latest playwright@latest impeccable@latest
-RUN playwright install --with-deps chromium
+RUN npm install -g opencode-ai@latest impeccable@latest
 
 COPY app /app/app
 COPY skills /app/skills

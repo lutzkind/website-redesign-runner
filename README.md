@@ -28,20 +28,10 @@ Git-backed runner for AI website redesign jobs.
 ```json
 {
   "website_url": "https://example.com",
-  "design_references": [
-    {
-      "url": "https://stripe.com",
-      "focus": "Use the typography scale, dark/light contrast, and premium section spacing."
-    },
-    {
-      "url": "https://linear.app",
-      "focus": "Borrow the product storytelling rhythm and restrained motion direction."
-    }
-  ],
   "client_slug": "example-client",
   "industry": "restaurant",
+  "design_family": "editorial-luxury",
   "generator_profile": "quality",
-  "reference_limit": 1,
   "image_strategy": "hybrid",
   "reuse_source_images": true,
   "allow_external_images": true,
@@ -67,8 +57,8 @@ Git-backed runner for AI website redesign jobs.
 
 The runner now exposes the main operator levers directly in the job payload:
 
+- `design_family`: optional override for the internal art-direction family
 - `generator_profile`: `lean`, `balanced`, or `quality`
-- `reference_limit`: clamp references per run without editing the reference list
 - `image_strategy`: `source-only`, `source-first`, `hybrid`, or `stock-first`
 - `reuse_source_images`: whether to keep using source imagery when it is good enough
 - `allow_external_images`: whether the model may upgrade weak photography with external/editorial imagery
@@ -85,7 +75,7 @@ For prompt inspection:
 - `GET /jobs/<job_id>/prompt` returns the final prompt string
 - `GET /jobs/<job_id>/prompt-parts` returns the structured prompt sections used to build it
 - `GET /jobs/<job_id>/artifacts/prompt.metrics.json` exposes a per-part token estimate and audit suggestions
-- `GET /jobs/<job_id>/artifacts/<path>` exposes generated screenshots, analysis JSON, and logs for operator review
+- `GET /jobs/<job_id>/artifacts/<path>` exposes generated analysis JSON and logs for operator review
 
 This is enough to iterate without a dashboard at first. A dashboard becomes useful once you want saved presets, prompt/version history, and one-click reruns.
 
@@ -108,20 +98,31 @@ This makes the design system tunable without changing Python code:
 ## Analysis pipeline
 
 - the runner uses Firecrawl to scrape the source site into markdown + HTML
-- it also scrapes the first few reference sites so the prompt includes their actual structure and tone, not just their URLs
-- each reference can include a `focus` field describing what the model should borrow from that site
-- the runner now captures desktop and mobile screenshots for the source site and references, then derives a visual brief from those images
-- each reference now gets a stronger visual brief: palette cues, brightness/contrast, saturation, section rhythm, image density, and mood signals
-- each reference now also gets a CSS/DOM-driven `reference_blueprint` with typography roles, spacing scales, component patterns, and composition hints that are fed into the first generation pass
-- the runner extracts source and reference asset candidates so the model can reuse logos/photos when helpful instead of returning imageless redesigns
+- it extracts source asset candidates so the model can reuse logos/photos when helpful instead of returning imageless redesigns
 - the runner scores source completeness and, when needed, uses Firecrawl search to enrich weak websites with external business context
 - the runner writes `/jobs/<job_id>/source/analysis/business-profile.json` so prompts can use compact structured facts instead of raw scrape dumps
-- screenshot and visual-analysis artifacts are stored per job under `/data/jobs/<job_id>/source/analysis/`
+- the runner selects an internal design family and writes `/jobs/<job_id>/source/analysis/design-engine.json`
+- the runner generates a bespoke concept blueprint and writes `/jobs/<job_id>/source/analysis/concept-blueprint.json`
 - the first generation pass now receives explicit anti-pattern guardrails inspired by `impeccable` before any post-generation critique runs
 - the runner now writes `/jobs/<job_id>/prompt.metrics.json` so you can see estimated token spend by prompt section
 - after generation, the runner can run `impeccable detect --json dist/` and optionally launch a compact repair pass against only the generated preview files
 - if Firecrawl is unavailable for the source site, the runner falls back to a direct HTML fetch so jobs still run
 - for Docker/Coolify deploys, set `WEBSITE_REDESIGN_FIRECRAWL_URL` to the reachable Firecrawl endpoint from inside the container
+
+## Internal design families
+
+The runner no longer depends on external reference websites. It selects from an internal art-direction family library and generates a concept blueprint for the first pass.
+
+Available families:
+
+- `editorial-luxury`
+- `warm-hospitality`
+- `cinematic-bold`
+- `crisp-trust`
+- `craftsman-premium`
+- `modern-approachable`
+
+The selector infers a family from the industry, design goal, brand notes, and source content unless you override it with `design_family`.
 
 ## Model policy
 
