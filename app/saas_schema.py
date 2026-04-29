@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS sites (
     status TEXT NOT NULL DEFAULT 'draft',
     current_job_id TEXT,
     preview_url TEXT,
+    preview_image_url TEXT,
+    preview_image_captured_at TEXT,
     subdomain TEXT,
     custom_domain TEXT,
     dns_verified INTEGER NOT NULL DEFAULT 0,
@@ -128,6 +130,22 @@ CREATE TABLE IF NOT EXISTS outreach_offers (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS checkout_fulfillments (
+    session_id TEXT PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    site_id INTEGER REFERENCES sites(id) ON DELETE SET NULL,
+    offer_token TEXT,
+    customer_email TEXT,
+    plan_code TEXT NOT NULL,
+    stripe_customer_id TEXT,
+    stripe_subscription_id TEXT,
+    status TEXT NOT NULL DEFAULT 'processing',
+    login_url TEXT,
+    email_sent INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 """
 
 
@@ -176,6 +194,8 @@ def init_db():
     _add_column_if_missing(conn, "login_tokens", "redirect_path", "TEXT")
     _add_column_if_missing(conn, "sites", "normalized_domain", "TEXT NOT NULL DEFAULT ''")
     _add_column_if_missing(conn, "sites", "preview_url", "TEXT")
+    _add_column_if_missing(conn, "sites", "preview_image_url", "TEXT")
+    _add_column_if_missing(conn, "sites", "preview_image_captured_at", "TEXT")
     _add_column_if_missing(conn, "sites", "hosting_active", "INTEGER NOT NULL DEFAULT 0")
     _add_column_if_missing(conn, "sites", "oneoff_unlocked", "INTEGER NOT NULL DEFAULT 0")
     _add_column_if_missing(conn, "sites", "free_preview_used", "INTEGER NOT NULL DEFAULT 0")
@@ -192,6 +212,7 @@ def init_db():
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sites_user ON sites(user_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sites_domain ON sites(normalized_domain)")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_outreach_offer_site ON outreach_offers(site_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_checkout_fulfillments_user ON checkout_fulfillments(user_id)")
     conn.commit()
     conn.close()
 
@@ -659,6 +680,79 @@ def mark_outreach_offer_claimed(token: str):
     conn.execute(
         "UPDATE outreach_offers SET claimed_at = COALESCE(claimed_at, ?), updated_at = ? WHERE token = ?",
         (now_iso(), now_iso(), token),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_checkout_fulfillment(session_id: str) -> dict | None:
+    conn = get_db()
+    row = conn.execute("SELECT * FROM checkout_fulfillments WHERE session_id = ?", (session_id,)).fetchone()
+    conn.close()
+    return _row_or_none(row)
+
+
+def start_checkout_fulfillment(
+    session_id: str,
+    user_id: int | None,
+    site_id: int | None,
+    offer_token: str,
+    customer_email: str,
+    plan_code: str,
+) -> dict:
+    existing = get_checkout_fulfillment(session_id)
+    if existing:
+        return existing
+    conn = get_db()
+    conn.execute(
+        """
+        INSERT INTO checkout_fulfillments (
+            session_id, user_id, site_id, offer_token, customer_email, plan_code,
+            status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'processing', ?, ?)
+        """,
+        (session_id, user_id, site_id, offer_token, customer_email, plan_code, now_iso(), now_iso()),
+    )
+    conn.commit()
+    conn.close()
+    return get_checkout_fulfillment(session_id)
+
+
+def complete_checkout_fulfillment(
+    session_id: str,
+    stripe_customer_id: str = "",
+    stripe_subscription_id: str = "",
+    login_url: str = "",
+    email_sent: bool = False,
+    status: str = "fulfilled",
+):
+    conn = get_db()
+    conn.execute(
+        """
+        UPDATE checkout_fulfillments
+        SET stripe_customer_id = ?, stripe_subscription_id = ?, login_url = ?,
+            email_sent = ?, status = ?, updated_at = ?
+        WHERE session_id = ?
+        """,
+        (
+            stripe_customer_id or None,
+            stripe_subscription_id or None,
+            login_url or None,
+            1 if email_sent else 0,
+            status,
+            now_iso(),
+            session_id,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def fail_checkout_fulfillment(session_id: str, status: str = "failed"):
+    conn = get_db()
+    conn.execute(
+        "UPDATE checkout_fulfillments SET status = ?, updated_at = ? WHERE session_id = ?",
+        (status, now_iso(), session_id),
     )
     conn.commit()
     conn.close()

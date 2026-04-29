@@ -188,6 +188,12 @@ img {
     var(--paper-bright);
 }
 
+.hero-media {
+  display: grid;
+  gap: 16px;
+  align-self: center;
+}
+
 .section {
   padding: 52px 0 76px;
 }
@@ -501,6 +507,11 @@ img {
   margin: 0;
 }
 
+.offer-action-panel {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
 .editor-shell {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 360px;
@@ -571,6 +582,88 @@ img {
 
 .offer-preview-shell {
   margin-top: 24px;
+}
+
+.preview-shot {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  min-height: 360px;
+  border-radius: 20px;
+  border: 1px solid var(--paper-line);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(252, 250, 248, 0.96)),
+    var(--paper-bright);
+  box-shadow: var(--shadow-lifted);
+}
+
+.preview-shot img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  display: block;
+  transition: transform 420ms ease;
+}
+
+.preview-shot-frame {
+  width: 1440px;
+  height: 960px;
+  border: 0;
+  transform: scale(0.44);
+  transform-origin: top left;
+  pointer-events: none;
+}
+
+.preview-shot:hover img {
+  transform: scale(1.01);
+}
+
+.preview-shot-badge {
+  position: absolute;
+  left: 18px;
+  bottom: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 18px;
+  border-radius: 999px;
+  background: rgba(23, 19, 17, 0.92);
+  color: var(--paper-bright);
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  box-shadow: var(--shadow-soft);
+}
+
+.preview-shot-copy {
+  display: block;
+  max-width: 28ch;
+  color: var(--ink-soft);
+}
+
+.preview-shot-placeholder,
+.preview-shot-live,
+.preview-shot-loading {
+  display: grid;
+  place-items: center;
+  padding: 32px;
+}
+
+.preview-shot-placeholder .preview-shot-badge {
+  position: static;
+}
+
+.preview-shot-live {
+  padding: 0;
+  align-items: start;
+  justify-items: start;
+}
+
+.preview-caption {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: 0.94rem;
 }
 
 .offer-iframe {

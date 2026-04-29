@@ -10,6 +10,7 @@ const state = {
   pollJobId: null,
   heroTimer: null,
   revealObserver: null,
+  checkoutFlash: null,
 };
 
 const app = document.getElementById("app");
@@ -152,12 +153,12 @@ function startHeroRotator(id, lines) {
     el.classList.add("hero-rotator-out");
     window.setTimeout(() => {
       el.textContent = lines[index];
+      el.classList.remove("hero-rotator-in");
+      void el.offsetWidth;
       el.classList.remove("hero-rotator-out");
-      window.requestAnimationFrame(() => {
-        el.classList.add("hero-rotator-in");
-        window.setTimeout(() => el.classList.remove("hero-rotator-in"), 420);
-      });
-    }, 260);
+      el.classList.add("hero-rotator-in");
+      window.setTimeout(() => el.classList.remove("hero-rotator-in"), 420);
+    }, 300);
   }, 4200);
 }
 
@@ -177,6 +178,52 @@ function initScrollReveal() {
   );
   items.forEach((item) => observer.observe(item));
   state.revealObserver = observer;
+}
+
+function setCheckoutFlash(type, message, linkUrl = "") {
+  state.checkoutFlash = { type, message, linkUrl };
+}
+
+function takeCheckoutFlashMarkup() {
+  if (!state.checkoutFlash) return "";
+  const flash = state.checkoutFlash;
+  state.checkoutFlash = null;
+  return `
+    <div class="status-banner ${flash.type === "error" ? "status-warning" : "status-success"}">
+      ${escapeHtml(flash.message)}
+      ${flash.linkUrl ? ` <a href="${escapeHtml(flash.linkUrl)}">Open your private link</a>` : ""}
+    </div>
+  `;
+}
+
+function clearCheckoutParams() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("checkout");
+  url.searchParams.delete("session_id");
+  history.replaceState({}, "", `${url.pathname}${url.search}`);
+}
+
+async function maybeConfirmCheckout(offerToken = "") {
+  const params = new URLSearchParams(window.location.search);
+  const checkout = params.get("checkout");
+  const sessionId = params.get("session_id");
+  if (checkout === "cancel") {
+    setCheckoutFlash("error", "Checkout was canceled. Your preview is still here when you are ready.");
+    clearCheckoutParams();
+    return;
+  }
+  if (checkout !== "success" || !sessionId) return;
+  try {
+    const result = await apiPost("/checkout/confirm", { session_id: sessionId, offer_token: offerToken });
+    const message = result.email_sent
+      ? "Payment confirmed. Your private sign-in link is on its way."
+      : "Payment confirmed. Use your private sign-in link to continue.";
+    setCheckoutFlash("success", message, result.login_url || "");
+  } catch (error) {
+    setCheckoutFlash("error", error.message || "We could not confirm that payment yet.");
+  } finally {
+    clearCheckoutParams();
+  }
 }
 
 function hostedPlanMarkup(pricing, siteId = "", offerToken = "", compact = false) {
@@ -256,18 +303,18 @@ function pricingCardMarkup(pricing, context = {}) {
 async function renderLandingPage() {
   const pricing = await loadPricing();
   const rotatingLines = [
-    "Built for busy owners.",
-    "No technical project.",
-    "A simpler switch.",
-    "A clearer first impression.",
-    "More premium. More trust.",
+    "Your website should feel easy to trust.",
+    "Your website should make the next step obvious.",
+    "Your website should look premium from the first glance.",
+    "Your website should be simple to switch.",
+    "Your website should help you win the call.",
   ];
   renderLayout(`
     <main>
       <section class="page hero">
         <div class="hero-copy scroll-reveal reveal-1">
           <div class="eyebrow">For busy small business owners</div>
-          <h1 class="hero-title">${buildHeroRotator("landing-hero-rotator", rotatingLines, "A premium website redesign")}</h1>
+          <h1 class="hero-title">${buildHeroRotator("landing-hero-rotator", rotatingLines)}</h1>
           <p class="lead">
             We redesign your website so it feels clearer, more premium, and easier to trust.
             You keep your domain. We keep the switch simple.
@@ -555,6 +602,7 @@ async function renderEditorPage(siteId) {
 }
 
 async function renderBillingPage() {
+  await maybeConfirmCheckout("");
   const pricing = await loadPricing();
   const params = new URLSearchParams(window.location.search);
   const siteId = params.get("site") || "";
@@ -565,6 +613,7 @@ async function renderBillingPage() {
         <h1 class="section-title">Choose the next step.</h1>
         <p class="lead">Hosted is the simplest path. Credits buy more redesign rounds. One-off unlock gives you the files.</p>
       </div>
+      ${takeCheckoutFlashMarkup()}
       ${pricingCardMarkup(pricing, { siteId })}
     </main>
   `);
@@ -572,15 +621,36 @@ async function renderBillingPage() {
 }
 
 async function renderOfferPage(token) {
+  await maybeConfirmCheckout(token);
   const data = await apiGet(`/offers/${token}`);
   state.currentOffer = data.offer;
   if (data.site?.current_job_id && !data.site?.preview_url) maybePollSite(data.site);
+  const previewTarget = data.site?.preview_url || data.offer.preview_url || "";
+  const previewScreenshot = data.site?.preview_image_url
+    ? `
+      <a class="preview-shot" href="${escapeHtml(previewTarget)}" target="_blank" rel="noreferrer">
+        <img src="${escapeHtml(data.site.preview_image_url)}" alt="Preview of the redesigned ${escapeHtml(data.offer.company_name)} website">
+        <span class="preview-shot-badge">Open live preview</span>
+      </a>
+    `
+    : previewTarget
+      ? `
+        <div class="preview-shot preview-shot-live">
+          <iframe class="preview-shot-frame" src="${escapeHtml(previewTarget)}" title="Live preview for ${escapeHtml(data.offer.company_name)}"></iframe>
+          <a class="preview-shot-badge" href="${escapeHtml(previewTarget)}" target="_blank" rel="noreferrer">Open live preview</a>
+        </div>
+      `
+      : `
+        <div class="preview-shot preview-shot-loading">
+          <span class="preview-shot-copy">The live preview is still rendering. Refresh this page in a minute.</span>
+        </div>
+      `;
   const rotatingLines = [
-    `for ${data.offer.company_name}.`,
-    "Cleaner. Calmer. Premium.",
-    "Easier to trust.",
-    "Easier to act on.",
-    "Ready for a simple switch.",
+    `${data.offer.company_name}, your redesign is ready.`,
+    "It feels calmer, clearer, and easier to trust.",
+    "It keeps your brand and raises the standard.",
+    "It is ready for a simple, guided switch.",
+    "You can review it before you buy anything.",
   ];
   renderLayout(
     `
@@ -588,7 +658,7 @@ async function renderOfferPage(token) {
         <section class="page hero offer-hero">
           <div class="hero-copy scroll-reveal reveal-1">
             <div class="eyebrow">Private redesign for ${escapeHtml(data.offer.company_name)}</div>
-            <h1 class="hero-title">${buildHeroRotator("offer-hero-rotator", rotatingLines, "A more refined website")}</h1>
+            <h1 class="hero-title">${buildHeroRotator("offer-hero-rotator", rotatingLines)}</h1>
             <p class="lead">
               This redesign was prepared specifically for ${escapeHtml(data.offer.company_name)} as a private handoff.
               Review it first. Then choose the simplest hosted switch, a few more refinement rounds, or the one-off files.
@@ -601,29 +671,68 @@ async function renderOfferPage(token) {
             </div>
             <p class="hero-note">This page replaces the generic free redesign flow because your first redesign has already been prepared.</p>
           </div>
-          <aside class="hero-panel stack scroll-reveal reveal-2">
-            <div class="eyebrow">Your next step</div>
+          <aside class="hero-media scroll-reveal reveal-2">
+            ${previewScreenshot}
+            <p class="preview-caption">Open the live preview to click through the redesigned site before you choose the next step.</p>
+          </aside>
+        </section>
+
+        <section class="page section scroll-reveal">
+          ${takeCheckoutFlashMarkup()}
+          <div class="section-intro">
+            <div class="eyebrow">Next steps</div>
+            <h2 class="section-title">Review it. Choose the path that fits.</h2>
+            <p class="lead">Hosted is the simplest switch. Credits are for more changes. One-off is for taking the files with you.</p>
+          </div>
+          <div class="helper-grid">
+            <article class="card scroll-reveal reveal-1">
+              <div class="eyebrow">1</div>
+              <h3 class="card-title">Open the live preview</h3>
+              <p class="muted">Click through the redesigned version and decide if it feels like the right next step.</p>
+            </article>
+            <article class="card scroll-reveal reveal-2">
+              <div class="eyebrow">2</div>
+              <h3 class="card-title">Choose the simplest purchase path</h3>
+              <p class="muted">Most owners choose hosting first. It keeps the switch clean, guided, and non-technical.</p>
+            </article>
+            <article class="card scroll-reveal reveal-3">
+              <div class="eyebrow">3</div>
+              <h3 class="card-title">Keep your domain and go live</h3>
+              <p class="muted">We guide setup, keep your domain in place, and make the launch steps easy to follow.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="page section scroll-reveal">
+          <div class="hero-panel stack offer-action-panel">
+            <div class="eyebrow">Move forward</div>
             <h2 class="mini-title">A simple, guided switch</h2>
-            <p class="muted">If you want to move forward, hosted is the cleanest path. We keep the process simple and owner-friendly.</p>
-            <div class="stack">
+            <p class="muted">If this version feels right, hosted is the cleanest path. We keep the switch simple and owner-friendly.</p>
+            <div class="field">
+              <label class="field-label" for="offer-checkout-email">Where should we send the receipt and dashboard link?</label>
+              <input id="offer-checkout-email" class="input" type="email" value="${escapeHtml(data.offer.contact_email)}" placeholder="owner@yourbusiness.com">
+            </div>
+            <div class="actions actions-center">
               <button class="btn btn-primary" onclick="startCheckout('hosted_monthly', '${data.site?.id || ""}', '${token}')">Host this version for me</button>
               <button class="btn btn-link" onclick="toggleYearlyReveal('offer-yearly-reveal', 'offer-yearly-trigger')" id="offer-yearly-trigger" data-collapsed-label="Prefer yearly and save 20%?" data-expanded-label="Hide yearly option">Prefer yearly and save 20%?</button>
-              <div id="offer-yearly-reveal" class="yearly-reveal" hidden>
-                <div class="yearly-reveal-card">
-                  <p class="muted yearly-copy">Choose yearly hosting if you already know you want to keep the redesign live and save 20%.</p>
-                  <button class="btn btn-secondary" onclick="startCheckout('hosted_yearly', '${data.site?.id || ""}', '${token}')">$${(data.pricing.hosted_yearly.price_cents / 100).toFixed(0)}/year</button>
-                </div>
+            </div>
+            <div id="offer-yearly-reveal" class="yearly-reveal" hidden>
+              <div class="yearly-reveal-card">
+                <p class="muted yearly-copy">Choose yearly hosting if you already know you want to keep the redesign live and save 20%.</p>
+                <button class="btn btn-secondary" onclick="startCheckout('hosted_yearly', '${data.site?.id || ""}', '${token}')">$${(data.pricing.hosted_yearly.price_cents / 100).toFixed(0)}/year</button>
               </div>
+            </div>
+            <div class="actions actions-center">
               <button class="btn btn-secondary" onclick="startCheckout('credit_pack', '${data.site?.id || ""}', '${token}')">Buy redesign credits</button>
               <button class="btn btn-secondary" onclick="startCheckout('oneoff_unlock', '${data.site?.id || ""}', '${token}')">Buy one-off unlock</button>
-              <a class="btn btn-link btn-link-center" href="${data.pricing.migration.contact_url}">Ask about migration help</a>
             </div>
+            <a class="btn btn-link btn-link-center" href="${data.pricing.migration.contact_url}">Ask about migration help</a>
             <div class="divider"></div>
             <p class="fine">Need your private dashboard link instead? Use the sign-in flow with <strong>${escapeHtml(data.offer.contact_email)}</strong>.</p>
             <div class="actions actions-center">
               <button class="btn btn-link" onclick="navigate('/login')">Sign in</button>
             </div>
-          </aside>
+          </div>
         </section>
 
         <section class="page section scroll-reveal">
@@ -643,19 +752,6 @@ async function renderOfferPage(token) {
               <h2 class="card-title">Continue only if it feels right</h2>
               <p class="muted">Host it, refine it, or unlock the files. Start by reviewing it in private.</p>
             </article>
-          </div>
-        </section>
-
-        <section class="page section scroll-reveal reveal-2">
-          <div class="eyebrow">Your redesign</div>
-          <h2 class="section-title">Review the handoff.</h2>
-          <p class="lead">This is the redesigned version prepared for ${escapeHtml(data.offer.company_name)}. If it is still rendering, refresh in a minute.</p>
-          <div class="offer-preview-shell">
-            ${
-              data.site?.preview_url
-                ? `<iframe class="offer-iframe" src="${escapeHtml(data.site.preview_url)}"></iframe>`
-                : `<div class="card"><p class="muted">The redesign is still rendering. Refresh this page in a minute to review it.</p></div>`
-            }
           </div>
         </section>
       </main>
@@ -837,7 +933,8 @@ function maybePollJob(jobId, siteId) {
 async function startCheckout(planCode, siteId, offerToken) {
   try {
     if (offerToken) {
-      const result = await apiPost(`/offers/${offerToken}/checkout`, { plan_code: planCode, site_id: siteId });
+      const email = document.getElementById("offer-checkout-email")?.value?.trim() || "";
+      const result = await apiPost(`/offers/${offerToken}/checkout`, { plan_code: planCode, site_id: siteId, email });
       window.location.href = result.checkout_url;
       return;
     }

@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 import traceback
 import urllib.error
 import urllib.request
@@ -14,7 +15,7 @@ import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import saas_schema as db
 
@@ -39,12 +40,14 @@ HOSTED_YEARLY_CENTS = int(os.environ.get("HOSTED_YEARLY_CENTS", str(int(HOSTED_M
 CREDIT_PACK_CENTS = int(os.environ.get("CREDIT_PACK_CENTS", "900"))
 CREDIT_PACK_SIZE = int(os.environ.get("CREDIT_PACK_SIZE", "5"))
 ONEOFF_CENTS = int(os.environ.get("ONEOFF_CENTS", "19900"))
+GWS_SEND_BIN = os.environ.get("GWS_SEND_BIN", "gws")
 
 SITES_DIR = ROOT / "sites"
 EXPORTS_DIR = ROOT / "exports"
 JOBS_DIR = ROOT / "jobs"
+SCREENSHOTS_DIR = ROOT / "screenshots"
 
-for directory in (SITES_DIR, EXPORTS_DIR, JOBS_DIR):
+for directory in (SITES_DIR, EXPORTS_DIR, JOBS_DIR, SCREENSHOTS_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
 
@@ -86,6 +89,33 @@ def get_client_ip(handler) -> str:
     return handler.client_address[0]
 
 
+def resolve_public_base(handler=None) -> str:
+    configured = (os.environ.get("SAAS_PUBLIC_URL") or "").rstrip("/")
+    if configured and "yourdomain.com" not in configured:
+        return configured
+    coolify_url = (os.environ.get("COOLIFY_URL") or "").rstrip("/")
+    if handler:
+        proto = handler.headers.get("X-Forwarded-Proto", "")
+        host = handler.headers.get("X-Forwarded-Host", "") or handler.headers.get("Host", "")
+        if host:
+            scheme = proto or (urlparse(coolify_url).scheme if coolify_url else "http")
+            return f"{scheme}://{host}"
+    if coolify_url:
+        return coolify_url
+    return PUBLIC_BASE_URL
+
+
+def preview_url_for_public(raw_url: str, handler=None) -> str:
+    if not raw_url:
+        return ""
+    parsed = urlparse(raw_url)
+    if parsed.path.startswith("/preview/"):
+        base = resolve_public_base(handler)
+        rebuilt = parsed._replace(scheme=urlparse(base).scheme, netloc=urlparse(base).netloc)
+        return urlunparse(rebuilt)
+    return raw_url
+
+
 def require_auth(handler):
     auth = handler.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
@@ -95,8 +125,29 @@ def require_auth(handler):
 
 def send_email(to: str, subject: str, body_html: str) -> bool:
     if not SENDGRID_API_KEY:
-        print(f"[email] dev mode mail to {to}: {subject}", flush=True)
-        return False
+        try:
+            subprocess.run(
+                [
+                    GWS_SEND_BIN,
+                    "gmail",
+                    "+send",
+                    "--to",
+                    to,
+                    "--subject",
+                    subject,
+                    "--body",
+                    body_html,
+                    "--html",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            return True
+        except Exception as exc:
+            print(f"[email] gws fallback failed for {to}: {exc}", flush=True)
+            return False
     payload = json.dumps(
         {
             "personalizations": [{"to": [{"email": to}]}],
@@ -224,6 +275,30 @@ def price_catalog() -> dict:
     }
 
 
+def stripe_request(method: str, path: str, form: dict | None = None, query: list[tuple[str, str]] | None = None) -> dict | None:
+    if not STRIPE_SECRET_KEY:
+        return None
+    url = f"https://api.stripe.com{path}"
+    if query:
+        url = f"{url}?{urlencode(query)}"
+    body = urlencode(form or {}).encode() if form is not None else None
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {STRIPE_SECRET_KEY}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        method=method,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as response:
+            return json.loads(response.read().decode())
+    except Exception as exc:
+        print(f"[stripe] {method} {path} failed: {exc}", flush=True)
+        return None
+
+
 def create_site_for_user(user_id: int, source_url: str, title: str, normalized_domain: str) -> dict:
     base_slug = db.slugify(title or normalized_domain)
     candidate = base_slug
@@ -260,27 +335,14 @@ def create_stripe_checkout(
         "line_items[0][price]": price_id,
         "line_items[0][quantity]": "1",
     }
+    if mode == "payment":
+        form["customer_creation"] = "always"
     if customer_email:
         form["customer_email"] = customer_email
     for key, value in metadata.items():
         if value is not None:
             form[f"metadata[{key}]"] = str(value)
-    body = urlencode(form).encode()
-    req = urllib.request.Request(
-        "https://api.stripe.com/v1/checkout/sessions",
-        data=body,
-        headers={
-            "Authorization": f"Bearer {STRIPE_SECRET_KEY}",
-            "Content-Type": "application/x-www-form-urlencoded",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=20) as response:
-            return json.loads(response.read().decode())
-    except Exception as exc:
-        print(f"[stripe] checkout error: {exc}", flush=True)
-        return None
+    return stripe_request("POST", "/v1/checkout/sessions", form=form)
 
 
 def unique_site_slug(domain: str, company_name: str = "") -> str:
@@ -298,8 +360,10 @@ def site_payload(site: dict, user: dict | None = None) -> dict:
     hosted_active = bool(active_sub)
     offer = db.get_outreach_offer_by_site(site["id"])
     payload = dict(site)
+    payload["preview_url"] = preview_url_for_public(site.get("preview_url", ""))
+    payload["preview_image_url"] = site.get("preview_image_url", "")
     payload["access"] = {
-        "preview_ready": bool(site.get("preview_url")),
+        "preview_ready": bool(payload["preview_url"]),
         "hosted_active": hosted_active,
         "oneoff_unlocked": bool(site.get("oneoff_unlocked")),
         "free_preview_used": bool(site.get("free_preview_used")),
@@ -310,6 +374,39 @@ def site_payload(site: dict, user: dict | None = None) -> dict:
         balance = db.get_credit_balance(user["id"])
         payload["access"]["credits"] = balance["credits"]
     return payload
+
+
+def capture_preview_screenshot(site_id: int, preview_url: str):
+    if not preview_url:
+        return
+    output_path = SCREENSHOTS_DIR / f"site-{site_id}.png"
+    try:
+        subprocess.run(
+            ["node", str(BASE_DIR / "app" / "capture_screenshot.mjs"), preview_url, str(output_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+        db.update_site(
+            site_id,
+            preview_image_url=f"/api/screenshots/{output_path.name}",
+            preview_image_captured_at=now_iso(),
+        )
+    except Exception as exc:
+        print(f"[preview] screenshot capture failed for site {site_id}: {exc}", flush=True)
+
+
+def queue_preview_capture(site: dict):
+    if not shutil.which("node"):
+        return
+    preview_url = site.get("preview_url", "")
+    if not preview_url:
+        return
+    if site.get("preview_image_url") and site.get("preview_image_captured_at"):
+        return
+    thread = threading.Thread(target=capture_preview_screenshot, args=(site["id"], preview_url), daemon=True)
+    thread.start()
 
 
 def update_site_from_job_state(site: dict) -> dict:
@@ -324,8 +421,11 @@ def update_site_from_job_state(site: dict) -> dict:
     except Exception:
         return site
     updates = {}
-    if state.get("preview_url") and state.get("preview_url") != site.get("preview_url"):
-        updates["preview_url"] = state["preview_url"]
+    preview_url = preview_url_for_public(state.get("preview_url", ""))
+    if preview_url and preview_url != site.get("preview_url"):
+        updates["preview_url"] = preview_url
+        updates["preview_image_url"] = None
+        updates["preview_image_captured_at"] = None
     if state.get("status") == "completed":
         updates["status"] = "preview_ready"
     elif state.get("status") == "failed":
@@ -344,6 +444,7 @@ def update_site_from_job_state(site: dict) -> dict:
             )
             conn.commit()
             conn.close()
+        queue_preview_capture(site)
     return site
 
 
@@ -376,9 +477,9 @@ def submit_runner_job(site: dict, prompt: str = "", industry: str = "general", d
     return result
 
 
-def issue_login_link(email: str, redirect_path: str) -> tuple[bool, str]:
+def issue_login_link(email: str, redirect_path: str, handler=None) -> tuple[bool, str]:
     token = db.create_login_token(email, redirect_path=redirect_path)
-    login_url = f"{PUBLIC_BASE_URL}/login?token={token}"
+    login_url = f"{resolve_public_base(handler)}/login?token={token}"
     body = f"""
     <h2>Your redesigned site is ready to review</h2>
     <p>Use the secure sign-in link below:</p>
@@ -387,6 +488,97 @@ def issue_login_link(email: str, redirect_path: str) -> tuple[bool, str]:
     """
     sent = send_email(email, "Your WebRedesign sign-in link", body)
     return sent, login_url
+
+
+def finalize_checkout_session(session_id: str, handler=None, expected_user_id: int = 0, expected_offer_token: str = "") -> dict:
+    if not session_id:
+        raise ValueError("session_id required")
+    existing = db.get_checkout_fulfillment(session_id)
+    if existing and existing.get("status") == "fulfilled":
+        user = db.get_user_by_id(existing["user_id"]) if existing.get("user_id") else None
+        existing["site"] = site_payload(db.get_site(existing["site_id"]), user) if existing.get("site_id") else None
+        existing["offer"] = db.get_outreach_offer_by_token(existing["offer_token"]) if existing.get("offer_token") else None
+        return existing
+    session = stripe_request(
+        "GET",
+        f"/v1/checkout/sessions/{session_id}",
+        query=[
+            ("expand[]", "customer"),
+            ("expand[]", "subscription"),
+        ],
+    )
+    if not session:
+        raise RuntimeError("Could not retrieve checkout session from Stripe.")
+    if session.get("status") != "complete":
+        raise RuntimeError("Checkout session is not complete yet.")
+    if session.get("mode") == "payment" and session.get("payment_status") not in {"paid", "no_payment_required"}:
+        raise RuntimeError("Payment is not complete yet.")
+    metadata = session.get("metadata", {}) or {}
+    user_id = int(metadata.get("user_id", 0) or 0)
+    site_id = int(metadata.get("site_id", 0) or 0)
+    plan_code = metadata.get("plan_code", "")
+    offer_token = metadata.get("offer_token", "")
+    if expected_user_id and expected_user_id != user_id:
+        raise RuntimeError("Checkout session does not belong to this account.")
+    if expected_offer_token and expected_offer_token != offer_token:
+        raise RuntimeError("Checkout session does not belong to this offer.")
+    if not user_id or not plan_code:
+        raise RuntimeError("Checkout session is missing fulfillment metadata.")
+
+    fulfillment = existing or db.start_checkout_fulfillment(
+        session_id=session_id,
+        user_id=user_id,
+        site_id=site_id or None,
+        offer_token=offer_token,
+        customer_email=session.get("customer_details", {}).get("email", ""),
+        plan_code=plan_code,
+    )
+    if fulfillment.get("status") == "fulfilled":
+        return fulfillment
+
+    user = db.get_user_by_id(user_id)
+    if not user:
+        raise RuntimeError("Checkout user could not be found.")
+    stripe_customer = session.get("customer")
+    stripe_customer_id = stripe_customer.get("id") if isinstance(stripe_customer, dict) else stripe_customer or ""
+    stripe_subscription = session.get("subscription")
+    stripe_subscription_id = stripe_subscription.get("id") if isinstance(stripe_subscription, dict) else stripe_subscription or ""
+    if stripe_customer_id and not user.get("stripe_customer_id"):
+        db.update_user(user_id, stripe_customer_id=stripe_customer_id)
+
+    if plan_code == "credit_pack":
+        db.add_credits(user_id, CREDIT_PACK_SIZE, "credit_pack", session_id)
+    elif plan_code in {"hosted_monthly", "hosted_yearly"}:
+        db.create_subscription(user_id, stripe_subscription_id, metadata.get("price_id", ""), plan_code)
+        if site_id:
+            db.update_site(site_id, hosting_active=1)
+    elif plan_code == "oneoff_unlock":
+        if site_id:
+            db.update_site(site_id, oneoff_unlocked=1)
+    else:
+        db.fail_checkout_fulfillment(session_id, status="unknown_plan")
+        raise RuntimeError("Unknown checkout plan.")
+
+    if offer_token:
+        db.mark_outreach_offer_claimed(offer_token)
+
+    redirect_path = f"/offer/{offer_token}" if offer_token else (f"/app?site={site_id}" if site_id else "/dashboard")
+    email_sent, login_url = issue_login_link(user["email"], redirect_path, handler=handler)
+    db.complete_checkout_fulfillment(
+        session_id,
+        stripe_customer_id=stripe_customer_id,
+        stripe_subscription_id=stripe_subscription_id,
+        login_url=login_url,
+        email_sent=email_sent,
+        status="fulfilled",
+    )
+    result = db.get_checkout_fulfillment(session_id) or {}
+    result["redirect_path"] = redirect_path
+    result["login_url"] = login_url
+    result["email_sent"] = bool(email_sent)
+    result["site"] = site_payload(db.get_site(site_id), user) if site_id else None
+    result["offer"] = db.get_outreach_offer_by_token(offer_token) if offer_token else None
+    return result
 
 
 def parse_event_payload(handler) -> dict:
@@ -551,6 +743,11 @@ class SaasHandler(BaseHTTPRequestHandler):
                 self._send_file(EXPORTS_DIR / filename)
                 return
 
+            if path.startswith("/api/screenshots/"):
+                filename = path.split("/")[-1]
+                self._send_file(SCREENSHOTS_DIR / filename)
+                return
+
             if path.startswith("/api/jobs/"):
                 job_id = path.split("/")[3]
                 state_path = JOBS_DIR / job_id / "state.json"
@@ -588,8 +785,10 @@ class SaasHandler(BaseHTTPRequestHandler):
                 db.mark_outreach_offer_opened(token)
                 site = db.get_site(offer["site_id"])
                 site = update_site_from_job_state(site) if site else None
+                if site:
+                    queue_preview_capture(site)
                 offer_payload = dict(offer)
-                offer_payload["preview_url"] = site.get("preview_url") if site else offer.get("preview_url")
+                offer_payload["preview_url"] = site.get("preview_url") if site else preview_url_for_public(offer.get("preview_url", ""), self)
                 send_json(
                     self,
                     {
@@ -670,7 +869,7 @@ class SaasHandler(BaseHTTPRequestHandler):
                 claim = db.create_free_claim(owner["id"], site["id"], normalized_domain, client_ip, "homepage")
                 db.update_site(site["id"], free_preview_used=1, status="rendering")
                 result = submit_runner_job(site, prompt="", industry="small-business", design_goal="Make this business look more trustworthy and easier to buy from.")
-                sent, login_url = issue_login_link(owner["email"], f"/app?site={site['id']}")
+                sent, login_url = issue_login_link(owner["email"], f"/app?site={site['id']}", handler=self)
                 send_json(
                     self,
                     {
@@ -774,13 +973,13 @@ class SaasHandler(BaseHTTPRequestHandler):
                         normalized_domain,
                         headline=headline or f"{company_name}, here is your redesigned website.",
                         notes=notes,
-                        preview_url=site.get("preview_url") or "",
+                        preview_url=preview_url_for_public(site.get("preview_url") or "", self),
                     )
                 send_json(
                     self,
                     {
                         "offer": offer,
-                        "offer_url": f"{PUBLIC_BASE_URL}/offer/{offer['token']}",
+                        "offer_url": f"{resolve_public_base(self)}/offer/{offer['token']}",
                         "site": site_payload(site),
                     },
                     201,
@@ -802,10 +1001,11 @@ class SaasHandler(BaseHTTPRequestHandler):
                 metadata = {"user_id": user["id"], "plan_code": plan_code, "price_id": price["price_id"]}
                 if site_id:
                     metadata["site_id"] = site_id
+                public_base = resolve_public_base(self)
                 session = create_stripe_checkout(
                     price_id=price["price_id"],
-                    success_url=f"{PUBLIC_BASE_URL}/billing?checkout=success",
-                    cancel_url=f"{PUBLIC_BASE_URL}/billing?checkout=cancel",
+                    success_url=f"{public_base}/billing?checkout=success&session_id={{CHECKOUT_SESSION_ID}}",
+                    cancel_url=f"{public_base}/billing?checkout=cancel",
                     customer_email=user["email"],
                     metadata=metadata,
                     mode=mode,
@@ -837,10 +1037,11 @@ class SaasHandler(BaseHTTPRequestHandler):
                     "plan_code": plan_code,
                     "price_id": price["price_id"],
                 }
+                public_base = resolve_public_base(self)
                 session = create_stripe_checkout(
                     price_id=price["price_id"],
-                    success_url=f"{PUBLIC_BASE_URL}/offer/{offer['token']}?checkout=success",
-                    cancel_url=f"{PUBLIC_BASE_URL}/offer/{offer['token']}?checkout=cancel",
+                    success_url=f"{public_base}/offer/{offer['token']}?checkout=success&session_id={{CHECKOUT_SESSION_ID}}",
+                    cancel_url=f"{public_base}/offer/{offer['token']}?checkout=cancel",
                     customer_email=email,
                     metadata=metadata,
                     mode=mode,
@@ -849,6 +1050,21 @@ class SaasHandler(BaseHTTPRequestHandler):
                     send_error(self, "Failed to create checkout session", 500)
                     return
                 send_json(self, {"checkout_url": session["url"]})
+                return
+
+            if path == "/api/checkout/confirm":
+                session_id = body.get("session_id", "").strip()
+                offer_token = body.get("offer_token", "").strip()
+                if not session_id:
+                    send_error(self, "session_id required")
+                    return
+                result = finalize_checkout_session(
+                    session_id,
+                    handler=self,
+                    expected_user_id=user["id"] if user else 0,
+                    expected_offer_token=offer_token,
+                )
+                send_json(self, result)
                 return
 
             if path == "/api/domains":
@@ -905,21 +1121,11 @@ class SaasHandler(BaseHTTPRequestHandler):
                 event_type = event.get("type", "")
                 obj = event.get("data", {}).get("object", {})
                 metadata = obj.get("metadata", {}) or {}
-                user_id = int(metadata.get("user_id", 0) or 0)
-                site_id = int(metadata.get("site_id", 0) or 0)
-                plan_code = metadata.get("plan_code", "")
-                offer_token = metadata.get("offer_token", "")
-                if event_type == "checkout.session.completed" and user_id:
-                    if plan_code == "credit_pack":
-                        db.add_credits(user_id, CREDIT_PACK_SIZE, "credit_pack", obj.get("id", ""))
-                    elif plan_code in {"hosted_monthly", "hosted_yearly"}:
-                        db.create_subscription(user_id, obj.get("subscription", ""), obj.get("metadata", {}).get("price_id", ""), plan_code)
-                        if site_id:
-                            db.update_site(site_id, hosting_active=1)
-                    elif plan_code == "oneoff_unlock" and site_id:
-                        db.update_site(site_id, oneoff_unlocked=1)
-                    if offer_token:
-                        db.mark_outreach_offer_claimed(offer_token)
+                if event_type == "checkout.session.completed" and obj.get("id"):
+                    try:
+                        finalize_checkout_session(obj.get("id"), expected_user_id=int(metadata.get("user_id", 0) or 0))
+                    except Exception as exc:
+                        print(f"[stripe] webhook fulfillment failed: {exc}", flush=True)
                 send_json(self, {"received": True})
                 return
 
