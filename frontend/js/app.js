@@ -9,6 +9,7 @@ const state = {
   pollTimer: null,
   pollJobId: null,
   heroTimer: null,
+  revealObserver: null,
 };
 
 const app = document.getElementById("app");
@@ -59,6 +60,10 @@ function stopPolling() {
   if (state.heroTimer) {
     clearInterval(state.heroTimer);
     state.heroTimer = null;
+  }
+  if (state.revealObserver) {
+    state.revealObserver.disconnect();
+    state.revealObserver = null;
   }
 }
 
@@ -148,10 +153,30 @@ function startHeroRotator(id, lines) {
     window.setTimeout(() => {
       el.textContent = lines[index];
       el.classList.remove("hero-rotator-out");
-      el.classList.add("hero-rotator-in");
-      window.setTimeout(() => el.classList.remove("hero-rotator-in"), 420);
+      window.requestAnimationFrame(() => {
+        el.classList.add("hero-rotator-in");
+        window.setTimeout(() => el.classList.remove("hero-rotator-in"), 420);
+      });
     }, 260);
   }, 4200);
+}
+
+function initScrollReveal() {
+  const items = Array.from(document.querySelectorAll(".scroll-reveal"));
+  if (!items.length) return;
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("is-visible");
+          observer.unobserve(entry.target);
+        }
+      }
+    },
+    { threshold: 0.14, rootMargin: "0px 0px -6% 0px" }
+  );
+  items.forEach((item) => observer.observe(item));
+  state.revealObserver = observer;
 }
 
 function hostedPlanMarkup(pricing, siteId = "", offerToken = "", compact = false) {
@@ -240,14 +265,14 @@ async function renderLandingPage() {
   renderLayout(`
     <main>
       <section class="page hero">
-        <div class="hero-copy reveal reveal-1">
+        <div class="hero-copy scroll-reveal reveal-1">
           <div class="eyebrow">For busy small business owners</div>
           <h1 class="hero-title">${buildHeroRotator("landing-hero-rotator", rotatingLines, "A premium website redesign")}</h1>
           <p class="lead">
             We redesign your website so it feels clearer, more premium, and easier to trust.
             You keep your domain. We keep the switch simple.
           </p>
-          <div class="actions">
+          <div class="actions actions-center">
             <button class="btn btn-primary" onclick="document.getElementById('free-claim-website').focus()">Request your free redesign</button>
             <button class="btn btn-link" onclick="scrollToSection('pricing-section')">See pricing</button>
           </div>
@@ -255,10 +280,11 @@ async function renderLandingPage() {
             <span class="pill">No technical setup on your side</span>
             <span class="pill">Your domain stays yours</span>
             <span class="pill">Full setup guide included</span>
+            <span class="pill">SEO-ready structure</span>
           </div>
           <p class="hero-note">One free redesign per website and per customer connection. Then continue with hosting, extra redesign rounds, or a one-off unlock.</p>
         </div>
-        <aside class="hero-panel stack reveal reveal-2">
+        <aside class="hero-panel stack scroll-reveal reveal-2">
           <div class="eyebrow">Start here</div>
           <h2 class="mini-title">See your new version first</h2>
           <p class="muted">Send your current website. We prepare a private redesign page for you.</p>
@@ -275,45 +301,50 @@ async function renderLandingPage() {
             <label class="field-label" for="free-claim-email">Email</label>
             <input id="free-claim-email" class="input" type="email" placeholder="owner@yourbusiness.com">
           </div>
-          <div class="actions">
+          <div class="actions actions-center">
             <button class="btn btn-primary" onclick="submitFreeClaim()">Generate my free redesign</button>
           </div>
         </aside>
       </section>
 
-      <section class="page section">
+      <section class="page section scroll-reveal">
         <div class="section-grid">
-          <article class="card reveal reveal-1">
+          <article class="card scroll-reveal reveal-1">
             <div class="eyebrow">What you get</div>
             <h2 class="card-title">A better first impression</h2>
             <p class="muted">Cleaner structure, clearer messaging, and a more premium feel.</p>
           </article>
-          <article class="card reveal reveal-2">
+          <article class="card scroll-reveal reveal-2">
             <div class="eyebrow">How it works</div>
             <h2 class="card-title">You review. We guide.</h2>
             <p class="muted">See the redesign first. Ask for changes in plain language if you want more.</p>
           </article>
-          <article class="card reveal reveal-3">
-            <div class="eyebrow">Switching</div>
-            <h2 class="card-title">Keep your domain</h2>
+          <article class="card scroll-reveal reveal-3">
+            <div class="eyebrow">Core value</div>
+            <h2 class="card-title">Simple switch. Same domain.</h2>
             <p class="muted">No confusing handoff. No technical maze. Just a cleaner path to go live.</p>
           </article>
         </div>
       </section>
 
-      <section class="page section">
+      <section class="page section scroll-reveal">
+        <div class="section-intro">
+          <div class="eyebrow">How it works</div>
+          <h2 class="section-title">Three simple steps.</h2>
+          <p class="lead">Send your site. Review the redesign. Choose the next step only if it feels right.</p>
+        </div>
         <div class="helper-grid">
-          <article class="card reveal reveal-1">
+          <article class="card scroll-reveal reveal-1">
             <div class="eyebrow">1</div>
             <h3 class="card-title">Submit your current site</h3>
             <p class="muted">We only need your website and email.</p>
           </article>
-          <article class="card reveal reveal-2">
+          <article class="card scroll-reveal reveal-2">
             <div class="eyebrow">2</div>
             <h3 class="card-title">Review the redesign privately</h3>
             <p class="muted">You get a private link before you commit to anything.</p>
           </article>
-          <article class="card reveal reveal-3">
+          <article class="card scroll-reveal reveal-3">
             <div class="eyebrow">3</div>
             <h3 class="card-title">Choose the path that fits</h3>
             <p class="muted">Host it, refine it, or unlock the one-off files.</p>
@@ -321,15 +352,16 @@ async function renderLandingPage() {
         </div>
       </section>
 
-      <section class="page section reveal reveal-2" id="pricing-section">
+      <section class="page section scroll-reveal reveal-2" id="pricing-section">
         <div class="eyebrow">Pricing</div>
-        <h2 class="section-title">Simple choices after the free preview.</h2>
-        <p class="lead">Hosted at $19 per month is the easiest path. Yearly appears only after choosing hosting. Credits are for extra redesign rounds. One-off unlock is for owners who want the files outright.</p>
+        <h2 class="section-title">Simple pricing after the free preview.</h2>
+        <p class="lead">Start with hosted at $19 per month. Add more redesign rounds with credits. Or unlock the files with a one-off purchase.</p>
         ${pricingCardMarkup(pricing)}
       </section>
     </main>
   `);
   startHeroRotator("landing-hero-rotator", rotatingLines);
+  initScrollReveal();
 }
 
 function renderLoginPage() {
@@ -531,11 +563,12 @@ async function renderBillingPage() {
       <div>
         <div class="eyebrow">Pricing</div>
         <h1 class="section-title">Choose the next step.</h1>
-        <p class="lead">Hosted at $19 per month is the main path if you want the simplest switch. Yearly billing appears only if you want to save 20% after choosing hosting. Credits buy additional redesign rounds. One-off purchase unlocks the exported files.</p>
+        <p class="lead">Hosted is the simplest path. Credits buy more redesign rounds. One-off unlock gives you the files.</p>
       </div>
       ${pricingCardMarkup(pricing, { siteId })}
     </main>
   `);
+  initScrollReveal();
 }
 
 async function renderOfferPage(token) {
@@ -553,7 +586,7 @@ async function renderOfferPage(token) {
     `
       <main>
         <section class="page hero offer-hero">
-          <div class="hero-copy reveal reveal-1">
+          <div class="hero-copy scroll-reveal reveal-1">
             <div class="eyebrow">Private redesign for ${escapeHtml(data.offer.company_name)}</div>
             <h1 class="hero-title">${buildHeroRotator("offer-hero-rotator", rotatingLines, "A more refined website")}</h1>
             <p class="lead">
@@ -564,10 +597,11 @@ async function renderOfferPage(token) {
               <span class="pill">Your domain stays yours</span>
               <span class="pill">No technical handoff required</span>
               <span class="pill">Setup guidance included</span>
+              <span class="pill">SEO-ready structure</span>
             </div>
             <p class="hero-note">This page replaces the generic free redesign flow because your first redesign has already been prepared.</p>
           </div>
-          <aside class="hero-panel stack reveal reveal-2">
+          <aside class="hero-panel stack scroll-reveal reveal-2">
             <div class="eyebrow">Your next step</div>
             <h2 class="mini-title">A simple, guided switch</h2>
             <p class="muted">If you want to move forward, hosted is the cleanest path. We keep the process simple and owner-friendly.</p>
@@ -582,29 +616,29 @@ async function renderOfferPage(token) {
               </div>
               <button class="btn btn-secondary" onclick="startCheckout('credit_pack', '${data.site?.id || ""}', '${token}')">Buy redesign credits</button>
               <button class="btn btn-secondary" onclick="startCheckout('oneoff_unlock', '${data.site?.id || ""}', '${token}')">Buy one-off unlock</button>
-              <a class="btn btn-link" href="${data.pricing.migration.contact_url}">Ask about migration help</a>
+              <a class="btn btn-link btn-link-center" href="${data.pricing.migration.contact_url}">Ask about migration help</a>
             </div>
             <div class="divider"></div>
             <p class="fine">Need your private dashboard link instead? Use the sign-in flow with <strong>${escapeHtml(data.offer.contact_email)}</strong>.</p>
-            <div class="actions">
+            <div class="actions actions-center">
               <button class="btn btn-link" onclick="navigate('/login')">Sign in</button>
             </div>
           </aside>
         </section>
 
-        <section class="page section">
+        <section class="page section scroll-reveal">
           <div class="section-grid">
-            <article class="card reveal reveal-1">
+            <article class="card scroll-reveal reveal-1">
               <div class="eyebrow">What changed</div>
               <h2 class="card-title">More premium, less busy</h2>
               <p class="muted">A calmer structure, clearer copy, and a stronger first impression.</p>
             </article>
-            <article class="card reveal reveal-2">
+            <article class="card scroll-reveal reveal-2">
               <div class="eyebrow">Switching</div>
               <h2 class="card-title">No technical confusion</h2>
               <p class="muted">You keep your domain and get clear setup guidance instead of a technical checklist.</p>
             </article>
-            <article class="card reveal reveal-3">
+            <article class="card scroll-reveal reveal-3">
               <div class="eyebrow">Flexibility</div>
               <h2 class="card-title">Continue only if it feels right</h2>
               <p class="muted">Host it, refine it, or unlock the files. Start by reviewing it in private.</p>
@@ -612,7 +646,7 @@ async function renderOfferPage(token) {
           </div>
         </section>
 
-        <section class="page section reveal reveal-2">
+        <section class="page section scroll-reveal reveal-2">
           <div class="eyebrow">Your redesign</div>
           <h2 class="section-title">Review the handoff.</h2>
           <p class="lead">This is the redesigned version prepared for ${escapeHtml(data.offer.company_name)}. If it is still rendering, refresh in a minute.</p>
@@ -629,6 +663,7 @@ async function renderOfferPage(token) {
     { hideNav: false, hideFreeCta: true }
   );
   startHeroRotator("offer-hero-rotator", rotatingLines);
+  initScrollReveal();
 }
 
 async function renderRoute() {
@@ -646,7 +681,10 @@ async function renderRoute() {
 
   try {
     if (route.name === "landing") await renderLandingPage();
-    if (route.name === "login") renderLoginPage();
+    if (route.name === "login") {
+      renderLoginPage();
+      initScrollReveal();
+    }
     if (route.name === "dashboard") await renderDashboardPage();
     if (route.name === "editor") await renderEditorPage(route.siteId);
     if (route.name === "billing") await renderBillingPage();
