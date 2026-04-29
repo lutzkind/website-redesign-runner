@@ -134,8 +134,8 @@ function renderLayout(content, options = {}) {
 
 function buildHeroRotator(id, lines, prefix = "") {
   const initial = escapeHtml(lines[0] || "");
-  const before = prefix ? `${escapeHtml(prefix)} ` : "";
-  return `${before}<span id="${id}" class="hero-rotator">${initial}</span>`;
+  const before = prefix ? `<span class="hero-prefix">${escapeHtml(prefix)}</span>` : "";
+  return `${before}<span class="hero-rotator-shell"><span id="${id}" class="hero-rotator">${initial}</span></span>`;
 }
 
 function startHeroRotator(id, lines) {
@@ -231,10 +231,11 @@ function pricingCardMarkup(pricing, context = {}) {
 async function renderLandingPage() {
   const pricing = await loadPricing();
   const rotatingLines = [
-    "for owners who need a stronger first impression.",
-    "for businesses that want a simpler switch.",
-    "for people who do not want a technical project.",
-    "for teams that want premium, clear, and easy to trust.",
+    "Built for busy owners.",
+    "No technical project.",
+    "A simpler switch.",
+    "A clearer first impression.",
+    "More premium. More trust.",
   ];
   renderLayout(`
     <main>
@@ -243,8 +244,8 @@ async function renderLandingPage() {
           <div class="eyebrow">For busy small business owners</div>
           <h1 class="hero-title">${buildHeroRotator("landing-hero-rotator", rotatingLines, "A premium website redesign")}</h1>
           <p class="lead">
-            We redesign your current website into something clearer, more modern, and easier to trust.
-            You keep your domain, get a simple switch path, and receive setup guidance without managing a technical project.
+            We redesign your website so it feels clearer, more premium, and easier to trust.
+            You keep your domain. We keep the switch simple.
           </p>
           <div class="actions">
             <button class="btn btn-primary" onclick="document.getElementById('free-claim-website').focus()">Request your free redesign</button>
@@ -255,12 +256,12 @@ async function renderLandingPage() {
             <span class="pill">Your domain stays yours</span>
             <span class="pill">Full setup guide included</span>
           </div>
-          <p class="hero-note">One free redesign per website and per customer connection. After that, continue with hosting, extra redesign credits, or a one-off unlock.</p>
+          <p class="hero-note">One free redesign per website and per customer connection. Then continue with hosting, extra redesign rounds, or a one-off unlock.</p>
         </div>
         <aside class="hero-panel stack reveal reveal-2">
           <div class="eyebrow">Start here</div>
           <h2 class="mini-title">See your new version first</h2>
-          <p class="muted">Submit your current website and we will prepare a private redesign page for you.</p>
+          <p class="muted">Send your current website. We prepare a private redesign page for you.</p>
           <div id="free-claim-status"></div>
           <div class="field">
             <label class="field-label" for="free-claim-website">Your website</label>
@@ -284,18 +285,18 @@ async function renderLandingPage() {
         <div class="section-grid">
           <article class="card reveal reveal-1">
             <div class="eyebrow">What you get</div>
-            <h2 class="card-title">A calmer, more credible first impression</h2>
-            <p class="muted">The redesign focuses on clarity, trust, and a more premium feel so prospects understand your business faster.</p>
+            <h2 class="card-title">A better first impression</h2>
+            <p class="muted">Cleaner structure, clearer messaging, and a more premium feel.</p>
           </article>
           <article class="card reveal reveal-2">
             <div class="eyebrow">How it works</div>
-            <h2 class="card-title">You review it, we guide the switch</h2>
-            <p class="muted">You get the first redesign free, then request changes in plain language if you want to refine it further.</p>
+            <h2 class="card-title">You review. We guide.</h2>
+            <p class="muted">See the redesign first. Ask for changes in plain language if you want more.</p>
           </article>
           <article class="card reveal reveal-3">
             <div class="eyebrow">Switching</div>
-            <h2 class="card-title">Keep your domain, skip the confusion</h2>
-            <p class="muted">The goal is a simple handover path, not a fragile rebuild that leaves you figuring out hosting and DNS alone.</p>
+            <h2 class="card-title">Keep your domain</h2>
+            <p class="muted">No confusing handoff. No technical maze. Just a cleaner path to go live.</p>
           </article>
         </div>
       </section>
@@ -305,17 +306,17 @@ async function renderLandingPage() {
           <article class="card reveal reveal-1">
             <div class="eyebrow">1</div>
             <h3 class="card-title">Submit your current site</h3>
-            <p class="muted">We only need your website and email to start your free preview.</p>
+            <p class="muted">We only need your website and email.</p>
           </article>
           <article class="card reveal reveal-2">
             <div class="eyebrow">2</div>
             <h3 class="card-title">Review the redesign privately</h3>
-            <p class="muted">You receive a private link and can look through the redesign before committing to anything.</p>
+            <p class="muted">You get a private link before you commit to anything.</p>
           </article>
           <article class="card reveal reveal-3">
             <div class="eyebrow">3</div>
             <h3 class="card-title">Choose the path that fits</h3>
-            <p class="muted">Host it with us, buy more redesign rounds, or unlock the one-off version and keep the files.</p>
+            <p class="muted">Host it, refine it, or unlock the one-off files.</p>
           </article>
         </div>
       </section>
@@ -323,7 +324,7 @@ async function renderLandingPage() {
       <section class="page section reveal reveal-2" id="pricing-section">
         <div class="eyebrow">Pricing</div>
         <h2 class="section-title">Simple choices after the free preview.</h2>
-        <p class="lead">Start with hosted at $19 per month if you want the easiest switch. Yearly only appears after choosing the hosted path. Credits are for extra redesign rounds. One-off unlock is for owners who want the files outright.</p>
+        <p class="lead">Hosted at $19 per month is the easiest path. Yearly appears only after choosing hosting. Credits are for extra redesign rounds. One-off unlock is for owners who want the files outright.</p>
         ${pricingCardMarkup(pricing)}
       </section>
     </main>
@@ -543,8 +544,10 @@ async function renderOfferPage(token) {
   if (data.site?.current_job_id && !data.site?.preview_url) maybePollSite(data.site);
   const rotatingLines = [
     `for ${data.offer.company_name}.`,
-    "with a calmer, more premium first impression.",
-    "that feels easier to trust and easier to act on.",
+    "Cleaner. Calmer. Premium.",
+    "Easier to trust.",
+    "Easier to act on.",
+    "Ready for a simple switch.",
   ];
   renderLayout(
     `
@@ -555,7 +558,7 @@ async function renderOfferPage(token) {
             <h1 class="hero-title">${buildHeroRotator("offer-hero-rotator", rotatingLines, "A more refined website")}</h1>
             <p class="lead">
               This redesign was prepared specifically for ${escapeHtml(data.offer.company_name)} as a private handoff.
-              Review the new direction first, then choose whether you want the simplest hosted switch, a few more refinement rounds, or the one-off files.
+              Review it first. Then choose the simplest hosted switch, a few more refinement rounds, or the one-off files.
             </p>
             <div class="hero-points">
               <span class="pill">Your domain stays yours</span>
@@ -567,7 +570,7 @@ async function renderOfferPage(token) {
           <aside class="hero-panel stack reveal reveal-2">
             <div class="eyebrow">Your next step</div>
             <h2 class="mini-title">A simple, guided switch</h2>
-            <p class="muted">If you want to move forward, the hosted option is the cleanest path. We keep the experience simple and owner-friendly.</p>
+            <p class="muted">If you want to move forward, hosted is the cleanest path. We keep the process simple and owner-friendly.</p>
             <div class="stack">
               <button class="btn btn-primary" onclick="startCheckout('hosted_monthly', '${data.site?.id || ""}', '${token}')">Host this version for me</button>
               <button class="btn btn-link" onclick="toggleYearlyReveal('offer-yearly-reveal', 'offer-yearly-trigger')" id="offer-yearly-trigger" data-collapsed-label="Prefer yearly and save 20%?" data-expanded-label="Hide yearly option">Prefer yearly and save 20%?</button>
@@ -594,17 +597,17 @@ async function renderOfferPage(token) {
             <article class="card reveal reveal-1">
               <div class="eyebrow">What changed</div>
               <h2 class="card-title">More premium, less busy</h2>
-              <p class="muted">The redesign aims to feel clearer, calmer, and more trustworthy while staying easy for your visitors to read and act on.</p>
+              <p class="muted">A calmer structure, clearer copy, and a stronger first impression.</p>
             </article>
             <article class="card reveal reveal-2">
               <div class="eyebrow">Switching</div>
               <h2 class="card-title">No technical confusion</h2>
-              <p class="muted">If you choose hosting, the handoff stays simple. You keep your domain and receive clear setup guidance instead of a technical checklist.</p>
+              <p class="muted">You keep your domain and get clear setup guidance instead of a technical checklist.</p>
             </article>
             <article class="card reveal reveal-3">
               <div class="eyebrow">Flexibility</div>
               <h2 class="card-title">Continue only if it feels right</h2>
-              <p class="muted">Host it, refine it, or unlock the files. The first step is simply reviewing the redesign in private.</p>
+              <p class="muted">Host it, refine it, or unlock the files. Start by reviewing it in private.</p>
             </article>
           </div>
         </section>
@@ -612,7 +615,7 @@ async function renderOfferPage(token) {
         <section class="page section reveal reveal-2">
           <div class="eyebrow">Your redesign</div>
           <h2 class="section-title">Review the handoff.</h2>
-          <p class="lead">This is the redesigned version prepared for ${escapeHtml(data.offer.company_name)}. If the preview is still rendering, refresh in a minute.</p>
+          <p class="lead">This is the redesigned version prepared for ${escapeHtml(data.offer.company_name)}. If it is still rendering, refresh in a minute.</p>
           <div class="offer-preview-shell">
             ${
               data.site?.preview_url
