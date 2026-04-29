@@ -376,6 +376,37 @@ def site_payload(site: dict, user: dict | None = None) -> dict:
     return payload
 
 
+def sync_offer_from_site(offer: dict | None, site: dict | None) -> dict | None:
+    if not offer or not site:
+        return offer
+    preview_url = site.get("preview_url") or ""
+    if site.get("oneoff_unlocked") or site.get("hosting_active"):
+        status = "claimed"
+    elif preview_url:
+        status = "preview_ready"
+    elif site.get("current_job_id"):
+        status = "rendering"
+    else:
+        status = "ready"
+    updates = {}
+    if preview_url and offer.get("preview_url") != preview_url:
+        updates["preview_url"] = preview_url
+    if offer.get("status") != status:
+        updates["status"] = status
+    if updates:
+        conn = db.get_db()
+        sets = ", ".join(f"{key} = ?" for key in updates)
+        values = list(updates.values())
+        conn.execute(
+            f"UPDATE outreach_offers SET {sets}, updated_at = ? WHERE id = ?",
+            (*values, now_iso(), offer["id"]),
+        )
+        conn.commit()
+        conn.close()
+        offer = db.get_outreach_offer_by_token(offer["token"])
+    return offer
+
+
 def fetch_runner_job_state(job_id: str) -> dict:
     if not job_id:
         return {}
@@ -448,14 +479,7 @@ def update_site_from_job_state(site: dict) -> dict:
         db.update_site(site["id"], **updates)
         site = db.get_site(site["id"])
         offer = db.get_outreach_offer_by_site(site["id"])
-        if offer and site.get("preview_url") and offer.get("preview_url") != site.get("preview_url"):
-            conn = db.get_db()
-            conn.execute(
-                "UPDATE outreach_offers SET preview_url = ?, updated_at = ? WHERE id = ?",
-                (site["preview_url"], now_iso(), offer["id"]),
-            )
-            conn.commit()
-            conn.close()
+        sync_offer_from_site(offer, site)
         queue_preview_capture(site)
     return site
 
@@ -762,11 +786,10 @@ class SaasHandler(BaseHTTPRequestHandler):
 
             if path.startswith("/api/jobs/"):
                 job_id = path.split("/")[3]
-                state_path = JOBS_DIR / job_id / "state.json"
-                if not state_path.exists():
+                state = fetch_runner_job_state(job_id)
+                if not state:
                     send_error(self, "Job not found", 404)
                     return
-                state = json.loads(state_path.read_text())
                 site = None
                 if user:
                     for candidate in db.get_user_sites(user["id"]):
@@ -799,6 +822,8 @@ class SaasHandler(BaseHTTPRequestHandler):
                 site = update_site_from_job_state(site) if site else None
                 if site:
                     queue_preview_capture(site)
+                offer = sync_offer_from_site(db.get_outreach_offer_by_token(token), site)
+                offer = db.get_outreach_offer_by_token(token) or offer
                 offer_payload = dict(offer)
                 offer_payload["preview_url"] = site.get("preview_url") if site else preview_url_for_public(offer.get("preview_url", ""), self)
                 send_json(
@@ -987,6 +1012,8 @@ class SaasHandler(BaseHTTPRequestHandler):
                         notes=notes,
                         preview_url=preview_url_for_public(site.get("preview_url") or "", self),
                     )
+                site = update_site_from_job_state(db.get_site(site["id"]))
+                offer = sync_offer_from_site(db.get_outreach_offer_by_token(offer["token"]), site)
                 send_json(
                     self,
                     {

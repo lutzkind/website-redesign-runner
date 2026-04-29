@@ -148,18 +148,43 @@ function startHeroRotator(id, lines) {
   const el = document.getElementById(id);
   if (!el || !Array.isArray(lines) || lines.length < 2) return;
   let index = 0;
-  state.heroTimer = setInterval(() => {
-    index = (index + 1) % lines.length;
-    el.classList.add("hero-rotator-out");
-    window.setTimeout(() => {
-      el.textContent = lines[index];
-      el.classList.remove("hero-rotator-in");
-      void el.offsetWidth;
-      el.classList.remove("hero-rotator-out");
-      el.classList.add("hero-rotator-in");
-      window.setTimeout(() => el.classList.remove("hero-rotator-in"), 420);
-    }, 300);
-  }, 4200);
+  const rotate = () => {
+    state.heroTimer = window.setTimeout(() => {
+      if (!document.body.contains(el)) return;
+      index = (index + 1) % lines.length;
+      if (typeof el.animate === "function") {
+        el.animate(
+          [
+            { opacity: 1, transform: "translateY(0px)", filter: "blur(0px)" },
+            { opacity: 0, transform: "translateY(10px)", filter: "blur(1px)" },
+          ],
+          { duration: 260, easing: "cubic-bezier(0.32, 0, 0.67, 0)", fill: "forwards" }
+        ).onfinish = () => {
+          el.textContent = lines[index];
+          el.animate(
+            [
+              { opacity: 0, transform: "translateY(-10px)", filter: "blur(1px)" },
+              { opacity: 1, transform: "translateY(0px)", filter: "blur(0px)" },
+            ],
+            { duration: 340, easing: "cubic-bezier(0.22, 1, 0.36, 1)", fill: "forwards" }
+          );
+          rotate();
+        };
+        return;
+      }
+      el.classList.add("hero-rotator-out");
+      window.setTimeout(() => {
+        el.textContent = lines[index];
+        el.classList.remove("hero-rotator-in");
+        void el.offsetWidth;
+        el.classList.remove("hero-rotator-out");
+        el.classList.add("hero-rotator-in");
+        window.setTimeout(() => el.classList.remove("hero-rotator-in"), 420);
+        rotate();
+      }, 260);
+    }, 4200);
+  };
+  rotate();
 }
 
 function initScrollReveal() {
@@ -303,11 +328,11 @@ function pricingCardMarkup(pricing, context = {}) {
 async function renderLandingPage() {
   const pricing = await loadPricing();
   const rotatingLines = [
-    "Your website should feel easy to trust.",
-    "Your website should make the next step obvious.",
-    "Your website should look premium from the first glance.",
-    "Your website should be simple to switch.",
-    "Your website should help you win the call.",
+    "Look premium before the first call.",
+    "Keep your domain. Skip the usual mess.",
+    "Make the next step easy to trust.",
+    "Switch without technical confusion.",
+    "Turn your website into a better closer.",
   ];
   renderLayout(`
     <main>
@@ -333,8 +358,8 @@ async function renderLandingPage() {
         </div>
         <aside class="hero-panel stack scroll-reveal reveal-2">
           <div class="eyebrow">Start here</div>
-          <h2 class="mini-title">See your new version first</h2>
-          <p class="muted">Send your current website. We prepare a private redesign page for you.</p>
+          <h2 class="mini-title">See the redesign before you buy</h2>
+          <p class="muted">Send your site. We prepare a private redesign page you can review first.</p>
           <div id="free-claim-status"></div>
           <div class="field">
             <label class="field-label" for="free-claim-website">Your website</label>
@@ -358,7 +383,7 @@ async function renderLandingPage() {
         <div class="section-grid">
           <article class="card scroll-reveal reveal-1">
             <div class="eyebrow">What you get</div>
-            <h2 class="card-title">A better first impression</h2>
+            <h2 class="card-title">A stronger first impression</h2>
             <p class="muted">Cleaner structure, clearer messaging, and a more premium feel.</p>
           </article>
           <article class="card scroll-reveal reveal-2">
@@ -402,7 +427,7 @@ async function renderLandingPage() {
       <section class="page section scroll-reveal reveal-2" id="pricing-section">
         <div class="eyebrow">Pricing</div>
         <h2 class="section-title">Simple pricing after the free preview.</h2>
-        <p class="lead">Start with hosted at $19 per month. Add more redesign rounds with credits. Or unlock the files with a one-off purchase.</p>
+        <p class="lead">Start with hosting at $19 per month. Add more redesign rounds with credits. Or buy the files once.</p>
         ${pricingCardMarkup(pricing)}
       </section>
     </main>
@@ -636,7 +661,12 @@ async function renderOfferPage(token) {
     : previewTarget
       ? `
         <div class="preview-shot preview-shot-live">
-          <iframe class="preview-shot-frame" src="${escapeHtml(previewTarget)}" title="Live preview for ${escapeHtml(data.offer.company_name)}"></iframe>
+          <div class="preview-shot-browser">
+            <span></span><span></span><span></span>
+          </div>
+          <div class="preview-shot-viewport">
+            <iframe class="preview-shot-frame" src="${escapeHtml(previewTarget)}" title="Live preview for ${escapeHtml(data.offer.company_name)}"></iframe>
+          </div>
           <a class="preview-shot-badge" href="${escapeHtml(previewTarget)}" target="_blank" rel="noreferrer">Open live preview</a>
         </div>
       `
@@ -647,10 +677,10 @@ async function renderOfferPage(token) {
       `;
   const rotatingLines = [
     `${data.offer.company_name}, your redesign is ready.`,
-    "It feels calmer, clearer, and easier to trust.",
-    "It keeps your brand and raises the standard.",
-    "It is ready for a simple, guided switch.",
-    "You can review it before you buy anything.",
+    "Open it first. Decide in private.",
+    "Keep your domain. Keep the switch simple.",
+    "Go live without a technical handoff.",
+    "If it feels right, host it for $19 a month.",
   ];
   renderLayout(
     `
@@ -661,7 +691,7 @@ async function renderOfferPage(token) {
             <h1 class="hero-title">${buildHeroRotator("offer-hero-rotator", rotatingLines)}</h1>
             <p class="lead">
               This redesign was prepared specifically for ${escapeHtml(data.offer.company_name)} as a private handoff.
-              Review it first. Then choose the simplest hosted switch, a few more refinement rounds, or the one-off files.
+              Review it first. Then choose hosting, extra redesign rounds, or the one-off files.
             </p>
             <div class="hero-points">
               <span class="pill">Your domain stays yours</span>
@@ -681,8 +711,8 @@ async function renderOfferPage(token) {
           ${takeCheckoutFlashMarkup()}
           <div class="section-intro">
             <div class="eyebrow">Next steps</div>
-            <h2 class="section-title">Review it. Choose the path that fits.</h2>
-            <p class="lead">Hosted is the simplest switch. Credits are for more changes. One-off is for taking the files with you.</p>
+            <h2 class="section-title">Review it. Then choose the simplest next step.</h2>
+            <p class="lead">Hosted is the easiest switch. Credits are for more changes. One-off is for taking the files with you.</p>
           </div>
           <div class="helper-grid">
             <article class="card scroll-reveal reveal-1">
@@ -713,7 +743,7 @@ async function renderOfferPage(token) {
               <input id="offer-checkout-email" class="input" type="email" value="${escapeHtml(data.offer.contact_email)}" placeholder="owner@yourbusiness.com">
             </div>
             <div class="actions actions-center">
-              <button class="btn btn-primary" onclick="startCheckout('hosted_monthly', '${data.site?.id || ""}', '${token}')">Host this version for me</button>
+              <button class="btn btn-primary" onclick="startCheckout('hosted_monthly', '${data.site?.id || ""}', '${token}')">Host this version for $19/mo</button>
               <button class="btn btn-link" onclick="toggleYearlyReveal('offer-yearly-reveal', 'offer-yearly-trigger')" id="offer-yearly-trigger" data-collapsed-label="Prefer yearly and save 20%?" data-expanded-label="Hide yearly option">Prefer yearly and save 20%?</button>
             </div>
             <div id="offer-yearly-reveal" class="yearly-reveal" hidden>
@@ -724,7 +754,7 @@ async function renderOfferPage(token) {
             </div>
             <div class="actions actions-center">
               <button class="btn btn-secondary" onclick="startCheckout('credit_pack', '${data.site?.id || ""}', '${token}')">Buy redesign credits</button>
-              <button class="btn btn-secondary" onclick="startCheckout('oneoff_unlock', '${data.site?.id || ""}', '${token}')">Buy one-off unlock</button>
+              <button class="btn btn-secondary" onclick="startCheckout('oneoff_unlock', '${data.site?.id || ""}', '${token}')">Buy the files once</button>
             </div>
             <a class="btn btn-link btn-link-center" href="${data.pricing.migration.contact_url}">Ask about migration help</a>
             <div class="divider"></div>
