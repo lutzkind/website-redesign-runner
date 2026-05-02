@@ -28,6 +28,8 @@ FIRECRAWL_URL = os.environ.get("WEBSITE_REDESIGN_FIRECRAWL_URL", "http://127.0.0
 FIRECRAWL_SCRAPE_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_FIRECRAWL_TIMEOUT", "90"))
 SEO_AUDIT_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_SEO_AUDIT_TIMEOUT", "120"))
 IMPECCABLE_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_TIMEOUT", "180"))
+DEFAULT_CONTENT_CRITIQUE = os.environ.get("WEBSITE_REDESIGN_CONTENT_CRITIQUE", "true")
+DEFAULT_CONTENT_AUTOFIX = os.environ.get("WEBSITE_REDESIGN_CONTENT_AUTOFIX", "true")
 DEFAULT_SEO_CRITIQUE = os.environ.get("WEBSITE_REDESIGN_SEO_CRITIQUE", "true")
 DEFAULT_SEO_AUTOFIX = os.environ.get("WEBSITE_REDESIGN_SEO_AUTOFIX", "true")
 DEFAULT_IMPECCABLE_CRITIQUE = os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_CRITIQUE", "true")
@@ -35,6 +37,7 @@ DEFAULT_IMPECCABLE_AUTOFIX = os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_AUTOFIX
 IMPECCABLE_MAX_FINDINGS = int(os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_MAX_FINDINGS", "8"))
 IMPECCABLE_MAX_REFINEMENT_PASSES = int(os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_MAX_REFINEMENT_PASSES", "2"))
 SEO_MAX_REFINEMENT_PASSES = int(os.environ.get("WEBSITE_REDESIGN_SEO_MAX_REFINEMENT_PASSES", "1"))
+CONTENT_MAX_REFINEMENT_PASSES = int(os.environ.get("WEBSITE_REDESIGN_CONTENT_MAX_REFINEMENT_PASSES", "1"))
 ALLOWED_GENERATOR_PROFILES = {"lean", "balanced", "quality"}
 ALLOWED_IMAGE_STRATEGIES = {"source-only", "source-first", "hybrid", "stock-first"}
 ALLOWED_SOURCE_EXPANSION_MODES = {"strict", "balanced", "aggressive"}
@@ -526,6 +529,30 @@ def build_seo_blueprint(request: dict, business_profile: dict, source_summary: d
     }
 
 
+def build_content_blueprint(request: dict, business_profile: dict, source_summary: dict) -> dict:
+    menu_rule = ""
+    if request["industry"] == "restaurant":
+        menu_rule = (
+            "Do not link out to the legacy menu page. Rebuild menu highlights, featured dishes, pricing cues, and dayparts as part of the redesigned experience."
+        )
+    trust_signals = [item for item in business_profile.get("core_highlights", []) if item]
+    if business_profile.get("address"):
+        trust_signals.append("real address present")
+    if business_profile.get("phone"):
+        trust_signals.append("direct phone present")
+    if business_profile.get("hours"):
+        trust_signals.append("hours present")
+    return {
+        "rewrite_rule": "Rewrite and improve source copy into sharper, clearer, more persuasive language. Preserve facts, but do not reuse long sentences verbatim.",
+        "proof_rule": "Use only verifiable proof from source facts or extracted enrichment. If specific reviews, awards, or ratings are not present, do not invent them.",
+        "link_rule": "Do not use legacy source-site navigation or CTA links in the redesigned preview. Keep navigation internal to the preview and rebuild important content as sections.",
+        "menu_rule": menu_rule,
+        "trust_signals": trust_signals[:6],
+        "review_evidence_present": bool(business_profile.get("review_snippets")),
+        "forbidden_urls": [url for url in [business_profile.get("menu_url"), request["website_url"]] if url],
+    }
+
+
 def normalize_request(payload: dict) -> dict:
     website_url = str(payload.get("website_url", "")).strip()
     if not website_url:
@@ -586,6 +613,8 @@ def normalize_request(payload: dict) -> dict:
         "source_expansion_mode": source_expansion_mode,
         "search_enrichment": parse_bool(payload.get("search_enrichment"), True),
         "search_budget": search_budget,
+        "content_critique": parse_bool(payload.get("content_critique"), parse_bool(DEFAULT_CONTENT_CRITIQUE, True)),
+        "content_autofix": parse_bool(payload.get("content_autofix"), parse_bool(DEFAULT_CONTENT_AUTOFIX, True)),
         "seo_critique": parse_bool(payload.get("seo_critique"), parse_bool(DEFAULT_SEO_CRITIQUE, True)),
         "seo_autofix": parse_bool(payload.get("seo_autofix"), parse_bool(DEFAULT_SEO_AUTOFIX, True)),
         "impeccable_critique": parse_bool(payload.get("impeccable_critique"), parse_bool(DEFAULT_IMPECCABLE_CRITIQUE, True)),
@@ -767,6 +796,7 @@ def extract_business_profile(request: dict, source_summary: dict, enrichment: di
     address = match(r"(\d{1,6} [^\n,]+,\s*[^\n]+)")
     business_name = source_summary.get("title", "").split("-")[0].strip() or request["hostname"]
     maps_query_url = f"https://www.google.com/maps/search/?api=1&query={quote_plus(address)}" if address else ""
+    menu_url = match(r"\[VIEW BREAKFAST MENU\]\((https?://[^\)]+)\)") or match(r"\[[^\]]*MENU[^\]]*\]\((https?://[^\)]+)\)")
 
     highlights = []
     for phrase in (
@@ -787,6 +817,12 @@ def extract_business_profile(request: dict, source_summary: dict, enrichment: di
         if bit:
             enrichment_notes.append(truncate_text(bit, 220))
 
+    review_snippets = []
+    for item in enrichment.get("results", [])[: request["search_budget"]]:
+        bit = item.get("description") or item.get("markdown_excerpt") or ""
+        if re.search(r"\b(review|rated|stars?)\b", bit, flags=re.IGNORECASE):
+            review_snippets.append(truncate_text(bit, 180))
+
     return {
         "business_name": business_name,
         "category": request["industry"],
@@ -795,11 +831,13 @@ def extract_business_profile(request: dict, source_summary: dict, enrichment: di
         "phone": phone,
         "hours": hours,
         "maps_query_url": maps_query_url,
+        "menu_url": menu_url,
         "core_highlights": highlights[:6],
         "source_description": source_summary.get("description", ""),
         "source_title": source_summary.get("title", ""),
         "asset_count": len(source_assets),
         "external_enrichment_notes": enrichment_notes[:4],
+        "review_snippets": review_snippets[:3],
         "sources": [source_summary.get("url", "")] + [item.get("url", "") for item in enrichment.get("results", [])[:4]],
     }
 
@@ -905,6 +943,7 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
         "business_profile": {},
         "design_engine": {},
         "concept_blueprint": {},
+        "content_blueprint": {},
         "seo_blueprint": {},
     }
 
@@ -974,9 +1013,18 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
         source_summary,
         result["concept_blueprint"],
     )
+    result["content_blueprint"] = build_content_blueprint(
+        request,
+        result["business_profile"],
+        source_summary,
+    )
     (analysis_dir / "design-engine.json").write_text(json.dumps(result["design_engine"], indent=2), encoding="utf-8")
     (analysis_dir / "concept-blueprint.json").write_text(
         json.dumps(result["concept_blueprint"], indent=2),
+        encoding="utf-8",
+    )
+    (analysis_dir / "content-blueprint.json").write_text(
+        json.dumps(result["content_blueprint"], indent=2),
         encoding="utf-8",
     )
     (analysis_dir / "seo-blueprint.json").write_text(
@@ -1052,6 +1100,7 @@ def build_prompt_parts(request: dict, job_dir: Path) -> tuple[dict, list[str]]:
     business_profile = source_context.get("business_profile", {})
     design_engine = source_context.get("design_engine", {})
     concept_blueprint = source_context.get("concept_blueprint", {})
+    content_blueprint = source_context.get("content_blueprint", {})
     seo_blueprint = source_context.get("seo_blueprint", {})
     limits = profile_limits(request["generator_profile"])
     source_assets = source.get("asset_candidates", []) or []
@@ -1082,6 +1131,9 @@ Working directives:
 - Avoid generic SaaS hero composition, default Tailwind landing-page stacking, and interchangeable startup polish.
 - Build the first draft from the internal design family and concept blueprint. Do not rely on copied public-site patterns.
 - Always include a real location module near the footer with address, hours, phone, and a real map/embed or directions link.
+- Do not use old-site navigation links such as legacy menu/about/contact URLs in the redesigned preview.
+- Do not fabricate testimonials, review attributions, awards, ratings, or statistics that are not present in the extracted source facts or enrichment.
+- Rewrite source marketing copy; do not copy long source paragraphs verbatim into the redesign.
 """
 
     operator_controls = f"""Operator controls:
@@ -1118,6 +1170,17 @@ Working directives:
 - Heading rule: {seo_blueprint.get('heading_rule', '')}
 - Alt text rule: {seo_blueprint.get('alt_text_rule', '')}
 - Footer/location rule: {seo_blueprint.get('footer_rule', '')}
+"""
+
+    content_integrity_block = f"""Content integrity requirements:
+- Rewrite rule: {content_blueprint.get('rewrite_rule', '')}
+- Proof rule: {content_blueprint.get('proof_rule', '')}
+- Link rule: {content_blueprint.get('link_rule', '')}
+- Menu rule: {content_blueprint.get('menu_rule', 'Not applicable')}
+- Trust signals that may be emphasized:
+{chr(10).join(f"  - {item}" for item in content_blueprint.get('trust_signals', [])) or '  - None extracted'}
+- Forbidden source URLs:
+{chr(10).join(f"  - {item}" for item in content_blueprint.get('forbidden_urls', [])) or '  - None'}
 """
 
     source_context_block = f"""Source website context:
@@ -1185,6 +1248,8 @@ Working directives:
 - The first draft should already feel art-directed and prospect-ready, not like a template adaptation.
 - The first draft must also be SEO-ready: title, description, canonical, OG/Twitter metadata, one clear H1, and valid LocalBusiness-style JSON-LD should already be present.
 - Include a real map or directions embed/link in the closing/footer area using the actual business location. Do not replace the location module with decorative imagery.
+- Do not send users back to the old website for key content. Rebuild critical content like menus, services, FAQs, and offers directly inside the redesign.
+- If trustworthy review copy or ratings are not available in the extracted source context, omit testimonial quotes rather than inventing them.
 - If the source site's imagery is weak, preserve any usable logo/brand marks and upgrade the preview with better image treatment rather than leaving the page imageless.
 - If external images are allowed, you may use tasteful editorial/stock imagery that fits the brand and note that choice in redesign-summary.md.
 - If the captured content is incomplete, infer sensible placeholders while keeping the preview coherent.
@@ -1197,6 +1262,7 @@ Working directives:
         "operator_controls": operator_controls,
         "business_profile": business_profile_block,
         "seo_requirements": seo_requirements_block,
+        "content_integrity": content_integrity_block,
         "source_context": source_context_block,
         "design_family": design_family_block,
         "concept_blueprint": concept_blueprint_block,
@@ -1397,6 +1463,176 @@ def extract_json_ld_blocks(html: str) -> list[str]:
         html,
         flags=re.IGNORECASE | re.DOTALL,
     )
+
+
+def normalize_text_for_overlap(text: str) -> str:
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip().lower()
+
+
+def audit_generated_content(job_dir: Path, request: dict) -> dict:
+    index_file = job_dir / "dist" / "index.html"
+    if not index_file.exists():
+        raise RuntimeError("dist/index.html missing for content audit")
+
+    html = index_file.read_text(encoding="utf-8", errors="ignore")
+    source_context = request.get("source_context") or {}
+    business_profile = source_context.get("business_profile", {})
+    content_blueprint = source_context.get("content_blueprint", {})
+    source_summary = (source_context.get("source") or {}).get("summary", {})
+    findings: list[dict] = []
+
+    hrefs = re.findall(r"""href=["']([^"']+)["']""", html, flags=re.IGNORECASE)
+    forbidden_urls = [url for url in content_blueprint.get("forbidden_urls", []) if url]
+    hostname = request["hostname"]
+    legacy_links = [href for href in hrefs if any(url in href for url in forbidden_urls) or hostname in href]
+    if legacy_links:
+        findings.append({
+            "rule": "legacy-links",
+            "severity": "high",
+            "message": f"Generated preview still links back to the old site: {legacy_links[:4]}",
+        })
+
+    if request["industry"] == "restaurant":
+        has_menu_section = bool(re.search(r">\s*menu(?:\s+highlights)?\s*<", html, flags=re.IGNORECASE))
+        price_count = len(re.findall(r"\$\d{1,3}(?:\.\d{2})?", html))
+        if not has_menu_section or price_count < 2:
+            findings.append({
+                "rule": "missing-rebuilt-menu",
+                "severity": "high",
+                "message": "Restaurant redesign should include an on-page rebuilt menu or menu highlights instead of sending users elsewhere.",
+            })
+        if any("menu" in href.lower() for href in hrefs if hostname in href):
+            findings.append({
+                "rule": "legacy-menu-link",
+                "severity": "high",
+                "message": "Preview still links to the old external menu URL instead of rebuilding menu content.",
+            })
+
+    if not content_blueprint.get("review_evidence_present"):
+        if re.search(r"\b(yelp|google|tripadvisor)\b", html, flags=re.IGNORECASE) or re.search(r"[★☆]{3,}", html):
+            findings.append({
+                "rule": "invented-reviews",
+                "severity": "high",
+                "message": "Preview appears to include review-platform attributions or star ratings without extracted review evidence.",
+            })
+
+    if "google.com/maps" in html or "/maps/dir/" in html:
+        if re.search(r"alt=[\"']Map to .*?[\"']", html, flags=re.IGNORECASE) and not re.search(r"<iframe[^>]+maps", html, flags=re.IGNORECASE):
+            findings.append({
+                "rule": "fake-map-visual",
+                "severity": "medium",
+                "message": "Location area uses a decorative image labeled like a map instead of a real embedded map surface.",
+            })
+
+    source_excerpt = normalize_text_for_overlap(source_summary.get("markdown_excerpt", ""))
+    if source_excerpt:
+        generated_text = normalize_text_for_overlap(html)
+        copied_markers = []
+        for snippet in re.split(r"[.!?]\s+", source_excerpt):
+            snippet = snippet.strip()
+            if len(snippet) >= 100 and snippet in generated_text:
+                copied_markers.append(snippet[:120])
+            if len(copied_markers) >= 3:
+                break
+        if copied_markers:
+            findings.append({
+                "rule": "verbatim-source-copy",
+                "severity": "medium",
+                "message": "Long source sentences appear to be copied too directly into the redesign.",
+                "examples": copied_markers,
+            })
+
+    report = {
+        "status": "clean" if not findings else "findings",
+        "findings_count": len(findings),
+        "findings": findings,
+    }
+    (job_dir / "content-audit.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    return report
+
+
+def format_content_finding(item: dict) -> str:
+    extra = ""
+    if item.get("examples"):
+        extra = f" | examples: {' || '.join(item['examples'][:2])}"
+    return f"- [{item.get('rule', 'issue')}] severity={item.get('severity', 'unknown')} — {item.get('message', '')}{extra}"
+
+
+def run_content_refinement(job_dir: Path, request: dict, audit: dict) -> dict:
+    findings = audit.get("findings", [])[:10]
+    findings_block = "\n".join(format_content_finding(item) for item in findings) or "- No content findings provided"
+    source_context = request.get("source_context") or {}
+    content_blueprint = source_context.get("content_blueprint", {})
+    business_profile = source_context.get("business_profile", {})
+    prompt = f"""You are running a targeted content-integrity refinement pass on an existing static site in ./dist.
+
+Edit only files inside ./dist and ./dist/redesign-summary.md.
+Do not rebuild from scratch. Preserve the current design concept and layout unless a finding requires adjustment.
+
+Fix these content and brand-integrity findings:
+{findings_block}
+
+Requirements:
+- Rewrite copy so it feels sharper and more bespoke without changing factual business information.
+- Do not use legacy source-site navigation or CTA links. Remove old menu/about/contact links and rebuild that content inside the preview.
+- If this is a restaurant, ensure menu highlights exist on the page itself with at least a few representative dishes or dayparts.
+- Do not invent testimonials, star ratings, Google/Yelp attributions, awards, or stats unless they are explicitly present in extracted source facts.
+- If reviews are unsupported, replace them with stronger factual trust modules based on longevity, atmosphere, location, hours, team, or hospitality cues.
+- The footer/location module must include a real directions or maps link and should not use a decorative photo as a fake map.
+- Append a short 'Content integrity refinement' note to ./dist/redesign-summary.md describing what changed.
+
+Blueprint reminders:
+- Rewrite rule: {content_blueprint.get('rewrite_rule', '')}
+- Link rule: {content_blueprint.get('link_rule', '')}
+- Menu rule: {content_blueprint.get('menu_rule', '')}
+- Business name: {business_profile.get('business_name', '')}
+"""
+    prompt_file = job_dir / "content-refinement-prompt.txt"
+    prompt_file.write_text(prompt, encoding="utf-8")
+    local_config_path = build_local_opencode_config(job_dir)
+    env = os.environ.copy()
+    env["OPENCODE_CONFIG"] = str(local_config_path)
+    cmd = ["opencode", "run", prompt, "--model", MODEL, "--dir", str(job_dir)]
+    result = run_command(cmd, cwd=job_dir, env=env, timeout=3600)
+    log_path = job_dir / "content-refinement.log"
+    log_path.write_text(
+        f"exit_code={result.returncode}\n\nSTDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}\n",
+        encoding="utf-8",
+    )
+    return {
+        "exit_code": result.returncode,
+        "log": str(log_path),
+        "prompt": str(prompt_file),
+        "findings_used": len(findings),
+    }
+
+
+def run_content_pipeline(job_id: str, job_dir: Path, request: dict) -> dict:
+    audit = audit_generated_content(job_dir, request)
+    passes: list[dict] = []
+    if audit.get("status") != "findings" or not request.get("content_autofix", True):
+        audit["passes"] = passes
+        return audit
+
+    for pass_index in range(1, CONTENT_MAX_REFINEMENT_PASSES + 1):
+        update_state(job_id, step="running-content-refinement", content=audit)
+        refinement = run_content_refinement(job_dir, request, audit)
+        next_audit = None
+        if refinement.get("exit_code") == 0:
+            next_audit = audit_generated_content(job_dir, request)
+        pass_report = {"pass": pass_index, "refinement": refinement, "post_refinement": next_audit}
+        passes.append(pass_report)
+        audit["passes"] = passes
+        audit["refinement"] = refinement
+        audit["post_refinement"] = next_audit
+        if not next_audit or next_audit.get("status") != "findings":
+            break
+        audit = next_audit
+
+    audit["passes"] = passes
+    return audit
 
 
 def audit_generated_seo(job_dir: Path, request: dict) -> dict:
@@ -1768,6 +2004,16 @@ def process_job(job_id: str, request: dict) -> None:
             if opencode_result["exit_code"] != 0:
                 raise RuntimeError(f"OpenCode exited with code {opencode_result['exit_code']}")
 
+        content_result = None
+        if request.get("content_critique", True):
+            update_state(job_id, step="running-content-audit")
+            try:
+                content_result = run_content_pipeline(job_id, job_dir, request)
+                update_state(job_id, content=content_result)
+            except Exception as exc:
+                content_result = {"status": "error", "error": str(exc)}
+                update_state(job_id, content=content_result)
+
         seo_result = None
         if request.get("seo_critique", True):
             update_state(job_id, step="running-seo")
@@ -1793,6 +2039,7 @@ def process_job(job_id: str, request: dict) -> None:
             step="publishing-preview",
             opencode=opencode_result,
             applied_skills=opencode_result.get("applied_skills", []),
+            content=content_result,
             seo=seo_result,
             impeccable=critique_result,
         )
