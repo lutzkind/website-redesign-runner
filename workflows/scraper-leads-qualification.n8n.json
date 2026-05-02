@@ -1,0 +1,321 @@
+{
+  "name": "Scraper Leads Qualification",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "0c30816e-57f2-4e6b-a9a7-f0cf2d7caf2a",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1120,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "projectId": "pc0fmz2i62ewg6n",
+        "table": "mswfxq541pe6khe",
+        "returnAll": false,
+        "limit": 100,
+        "options": {
+          "fields": [
+            "Id",
+            "name",
+            "category",
+            "website",
+            "qualification_status"
+          ]
+        }
+      },
+      "id": "3b64d11b-4193-4f57-b0ec-bf0d9300d71b",
+      "name": "Fetch Scraper Leads",
+      "type": "n8n-nodes-base.nocoDb",
+      "typeVersion": 3,
+      "position": [
+        -900,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForEachItem",
+        "jsCode": "const website = String($json.website || '').trim();\nconst status = String($json.qualification_status || '').trim().toLowerCase();\n\nif (!website) {\n  return [];\n}\n\nif (status) {\n  return [];\n}\n\nif (!/^https?:\\/\\//i.test(website)) {\n  return [];\n}\n\nreturn [{ json: $json }];"
+      },
+      "id": "813374a3-ad02-4a6c-9884-c5d52442bb8d",
+      "name": "Filter Unqualified Leads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -680,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1
+      },
+      "id": "50592173-b17d-4d12-8379-623b4358e4a2",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -460,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForEachItem",
+        "jsCode": "const row = $json;\nconst category = String(row.category || '').trim();\n\nreturn [{\n  json: {\n    website_url: String(row.website || '').trim(),\n    industry: category || 'local_business',\n    company_name: String(row.name || '').trim(),\n    lead_id: `scraper-lead-${row.Id}`,\n    source_row_id: String(row.Id),\n    qualification_notes: 'Source table: Scraper Leads'\n  }\n}];"
+      },
+      "id": "282133c3-6554-4519-bd95-354c6c0e1645",
+      "name": "Prepare Qualification Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -240,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.WEBSITE_REDESIGN_RUNNER_URL || 'http://127.0.0.1:8000').replace(/\\/$/, '') + '/qualify' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "17b9b417-89d1-4ec1-96c3-8ad606763712",
+      "name": "Qualify Website",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -20,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "ecbe94c2-e31d-4f9b-a118-3d114e17dd41",
+      "name": "Merge Lead And Qualification",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        200,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForEachItem",
+        "jsCode": "const assessment = $json.assessment || {};\nconst normalizeList = (value) => Array.isArray(value)\n  ? value.filter(Boolean).join('\\n')\n  : '';\n\nreturn [{\n  json: {\n    Id: $json.Id,\n    qualification_id: $json.qualification_id || '',\n    qualification_status: assessment.qualification_status || '',\n    website_quality_score: assessment.website_quality_score ?? null,\n    redesign_opportunity_score: assessment.redesign_opportunity_score ?? null,\n    qualification_confidence: assessment.confidence ?? null,\n    qualification_summary: assessment.summary || '',\n    qualification_weak_signals: normalizeList(assessment.weak_signals),\n    qualification_strong_signals: normalizeList(assessment.strong_signals),\n    last_qualified_at: $json.created_at || new Date().toISOString()\n  }\n}];"
+      },
+      "id": "e2e7571b-ef80-46ea-b499-75409cc264bf",
+      "name": "Prepare NocoDB Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "projectId": "pc0fmz2i62ewg6n",
+        "table": "mswfxq541pe6khe",
+        "id": "={{ $json.Id }}",
+        "dataToSend": "defineBelow",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldName": "Id",
+              "fieldValue": "={{ $json.Id }}"
+            },
+            {
+              "fieldName": "qualification_id",
+              "fieldValue": "={{ $json.qualification_id }}"
+            },
+            {
+              "fieldName": "qualification_status",
+              "fieldValue": "={{ $json.qualification_status }}"
+            },
+            {
+              "fieldName": "website_quality_score",
+              "fieldValue": "={{ $json.website_quality_score }}"
+            },
+            {
+              "fieldName": "redesign_opportunity_score",
+              "fieldValue": "={{ $json.redesign_opportunity_score }}"
+            },
+            {
+              "fieldName": "qualification_confidence",
+              "fieldValue": "={{ $json.qualification_confidence }}"
+            },
+            {
+              "fieldName": "qualification_summary",
+              "fieldValue": "={{ $json.qualification_summary }}"
+            },
+            {
+              "fieldName": "qualification_weak_signals",
+              "fieldValue": "={{ $json.qualification_weak_signals }}"
+            },
+            {
+              "fieldName": "qualification_strong_signals",
+              "fieldValue": "={{ $json.qualification_strong_signals }}"
+            },
+            {
+              "fieldName": "last_qualified_at",
+              "fieldValue": "={{ $json.last_qualified_at }}"
+            }
+          ]
+        }
+      },
+      "id": "dd4c5789-c0bf-4b3d-a37f-4ed18b685268",
+      "name": "Update Lead Qualification",
+      "type": "n8n-nodes-base.nocoDb",
+      "typeVersion": 3,
+      "position": [
+        660,
+        240
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch Scraper Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Scraper Leads": {
+      "main": [
+        [
+          {
+            "node": "Filter Unqualified Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Unqualified Leads": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Prepare Qualification Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge Lead And Qualification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Qualification Request": {
+      "main": [
+        [
+          {
+            "node": "Qualify Website",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qualify Website": {
+      "main": [
+        [
+          {
+            "node": "Merge Lead And Qualification",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Lead And Qualification": {
+      "main": [
+        [
+          {
+            "node": "Prepare NocoDB Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare NocoDB Update": {
+      "main": [
+        [
+          {
+            "node": "Update Lead Qualification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Lead Qualification": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "7d13c1b0-b0b8-43d5-8e72-853f9ddf8ad6",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "id": "scraper-leads-qualification",
+  "tags": []
+}

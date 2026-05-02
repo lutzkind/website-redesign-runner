@@ -10,6 +10,7 @@ Git-backed runner for AI website redesign jobs.
 - runs `opencode run`
 - publishes static previews
 - sends success or failure emails
+- qualifies websites for outbound redesign prospecting
 
 ## Endpoints
 
@@ -21,6 +22,8 @@ Git-backed runner for AI website redesign jobs.
 - `GET /jobs/<job_id>/prompt`
 - `GET /jobs/<job_id>/prompt-parts`
 - `GET /jobs/<job_id>/artifacts/<path>`
+- `POST /qualify`
+- `GET /qualification-runs/<qualification_id>`
 - `GET /preview/<client-slug>/`
 
 ## Request shape
@@ -91,6 +94,40 @@ For prompt inspection:
 - `GET /jobs/<job_id>/artifacts/<path>` exposes generated analysis JSON and logs for operator review
 
 This is enough to iterate without a dashboard at first. A dashboard becomes useful once you want saved presets, prompt/version history, and one-click reruns.
+
+## Lead qualification
+
+Use `POST /qualify` as the scoring service behind an `n8n` lead workflow. `n8n` should:
+
+1. read a batch of leads from NocoDB
+2. loop over rows with a website
+3. call the runner's `/qualify` endpoint
+4. write `qualification_status`, scores, and reasons back to NocoDB
+5. forward only `target` rows into your outreach workflow
+
+An importable starter workflow is included at `workflows/scraper-leads-qualification.n8n.json`. It is prewired to the current NocoDB `Scraper Leads` table and expects the table's source URL column to be named `website`.
+
+Example request:
+
+```json
+{
+  "website_url": "https://example.com",
+  "industry": "restaurant",
+  "company_name": "Example Kitchen",
+  "lead_id": "lead_123",
+  "source_row_id": "245"
+}
+```
+
+Response highlights:
+
+- `assessment.qualification_status`: `target`, `review`, or `skip`
+- `assessment.website_quality_score`: higher means the current site is stronger
+- `assessment.redesign_opportunity_score`: higher means better redesign outreach target
+- `assessment.weak_signals`: why the site looks weak
+- `assessment.strong_signals`: why the site may already be good enough to skip
+
+Each qualification run is stored under `/data/qualification-runs/<id>/qualification.json` and exposed at `GET /qualification-runs/<id>`.
 
 ## Skill system
 

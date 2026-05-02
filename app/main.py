@@ -147,6 +147,7 @@ ALLOWED_DESIGN_FAMILIES = set(DESIGN_FAMILY_LIBRARY)
 
 JOBS_DIR = ROOT / "jobs"
 PREVIEWS_DIR = ROOT / "previews"
+QUALIFICATION_RUNS_DIR = ROOT / "qualification-runs"
 STATE_LOCK = threading.Lock()
 
 
@@ -170,6 +171,7 @@ GLOBAL_OPENCODE_CONFIG = Path(os.environ.get("OPENCODE_GLOBAL_CONFIG", "/root/.c
 def ensure_dirs() -> None:
     JOBS_DIR.mkdir(parents=True, exist_ok=True)
     PREVIEWS_DIR.mkdir(parents=True, exist_ok=True)
+    QUALIFICATION_RUNS_DIR.mkdir(parents=True, exist_ok=True)
     bootstrap_skills_dir()
 
 
@@ -676,6 +678,15 @@ def normalize_request(payload: dict) -> dict:
     }
 
 
+def normalize_qualification_request(payload: dict) -> dict:
+    request = normalize_request(payload)
+    request["company_name"] = str(payload.get("company_name", "")).strip()
+    request["lead_id"] = str(payload.get("lead_id", "")).strip()
+    request["source_row_id"] = str(payload.get("source_row_id", "")).strip()
+    request["qualification_notes"] = str(payload.get("qualification_notes", "")).strip()
+    return request
+
+
 def list_available_skills() -> dict:
     base_skills = sorted(
         path.stem for path in SKILLS_DIR.glob("*.md") if path.is_file()
@@ -813,6 +824,242 @@ def build_search_queries(request: dict, source_summary: dict) -> list[str]:
         queries.append(f"{base} {description[:80]}")
     queries.append(f"{base} reviews hours menu")
     return queries
+
+
+def summarize_html_structure(html: str) -> dict:
+    if not html:
+        return {
+            "h1_count": 0,
+            "h2_count": 0,
+            "section_count": 0,
+            "button_count": 0,
+            "form_count": 0,
+            "nav_link_count": 0,
+            "cta_hits": [],
+            "trust_hits": [],
+        }
+
+    lowercase = html.lower()
+    cta_terms = (
+        "book",
+        "reserve",
+        "reservation",
+        "call",
+        "contact",
+        "quote",
+        "schedule",
+        "visit",
+        "order",
+        "get started",
+        "request",
+    )
+    trust_terms = (
+        "testimonial",
+        "testimonials",
+        "reviews",
+        "review",
+        "award",
+        "awards",
+        "years",
+        "family-owned",
+        "family owned",
+        "trusted",
+        "guarantee",
+        "certified",
+    )
+
+    return {
+        "h1_count": len(re.findall(r"<h1\b", html, flags=re.IGNORECASE)),
+        "h2_count": len(re.findall(r"<h2\b", html, flags=re.IGNORECASE)),
+        "section_count": len(re.findall(r"<section\b", html, flags=re.IGNORECASE)),
+        "button_count": len(re.findall(r"<button\b", html, flags=re.IGNORECASE)),
+        "form_count": len(re.findall(r"<form\b", html, flags=re.IGNORECASE)),
+        "nav_link_count": len(re.findall(r"<nav\b", html, flags=re.IGNORECASE)),
+        "cta_hits": [term for term in cta_terms if term in lowercase],
+        "trust_hits": [term for term in trust_terms if term in lowercase],
+    }
+
+
+def clamp_score(value: float, lower: float = 0.0, upper: float = 100.0) -> float:
+    return max(lower, min(upper, value))
+
+
+def score_contact_accessibility(business_profile: dict) -> tuple[float, list[str], list[str]]:
+    score = 0.0
+    strong: list[str] = []
+    weak: list[str] = []
+
+    if business_profile.get("phone"):
+        score += 5
+        strong.append("phone number is visible")
+    else:
+        weak.append("phone number was not detected")
+    if business_profile.get("address"):
+        score += 5
+        strong.append("address is present")
+    else:
+        weak.append("address was not detected")
+    if business_profile.get("hours"):
+        score += 5
+        strong.append("hours are visible")
+    else:
+        weak.append("hours were not detected")
+    if business_profile.get("maps_query_url"):
+        score += 5
+        strong.append("location can be mapped")
+    else:
+        weak.append("no mappable location was found")
+    return score, strong, weak
+
+
+def assess_website_quality(request: dict, source_context: dict) -> dict:
+    source = source_context.get("source", {}) if isinstance(source_context, dict) else {}
+    source_summary = source.get("summary", {}) if isinstance(source, dict) else {}
+    business_profile = source_context.get("business_profile", {}) if isinstance(source_context, dict) else {}
+    asset_candidates = source.get("asset_candidates", []) if isinstance(source, dict) else []
+    completeness = source.get("completeness", {}) if isinstance(source, dict) else {}
+    top_links = source_summary.get("top_links", []) if isinstance(source_summary, dict) else []
+
+    html = ""
+    index_file = source.get("index_file") if isinstance(source, dict) else ""
+    if index_file:
+        try:
+            html = Path(index_file).read_text(encoding="utf-8")
+        except Exception:
+            html = ""
+
+    structure = summarize_html_structure(html)
+    markdown = source_summary.get("markdown_excerpt", "") or ""
+
+    strong_signals: list[str] = []
+    weak_signals: list[str] = []
+
+    content_score = 0.0
+    if len(markdown) >= 1800:
+        content_score += 20
+        strong_signals.append("source content is substantial")
+    elif len(markdown) >= 900:
+        content_score += 14
+        strong_signals.append("source content has moderate depth")
+    elif len(markdown) >= 350:
+        content_score += 8
+    else:
+        weak_signals.append("very little crawlable website content was captured")
+
+    if len(top_links) >= 5:
+        content_score += 4
+        strong_signals.append("multiple meaningful internal links were discovered")
+    elif len(top_links) <= 1:
+        weak_signals.append("very few internal navigation links were discovered")
+    content_score = min(content_score, 20)
+
+    contact_score, contact_strong, contact_weak = score_contact_accessibility(business_profile)
+    strong_signals.extend(contact_strong)
+    weak_signals.extend(contact_weak)
+
+    conversion_score = 0.0
+    cta_hits = structure.get("cta_hits", [])
+    if cta_hits:
+        conversion_score += min(12, 4 + len(cta_hits) * 2)
+        strong_signals.append(f"CTA language is present ({', '.join(cta_hits[:3])})")
+    else:
+        weak_signals.append("clear CTA language was not detected")
+    if structure.get("button_count", 0) >= 2:
+        conversion_score += 4
+    if structure.get("form_count", 0) >= 1:
+        conversion_score += 4
+        strong_signals.append("an on-page form is present")
+    conversion_score = min(conversion_score, 20)
+
+    trust_score = 0.0
+    trust_hits = structure.get("trust_hits", [])
+    if trust_hits:
+        trust_score += min(12, 4 + len(trust_hits) * 2)
+        strong_signals.append(f"trust signals are present ({', '.join(trust_hits[:3])})")
+    else:
+        weak_signals.append("testimonial/review/credibility signals were not detected")
+    if business_profile.get("core_highlights"):
+        trust_score += min(8, len(business_profile["core_highlights"]) * 2)
+    trust_score = min(trust_score, 20)
+
+    visual_score = 0.0
+    logo_assets = [item for item in asset_candidates if item.get("role") == "logo"]
+    if logo_assets:
+        visual_score += 6
+        strong_signals.append("brand/logo assets were detected")
+    else:
+        weak_signals.append("logo-like assets were not detected")
+    if len(asset_candidates) >= 6:
+        visual_score += 10
+        strong_signals.append("the site has a healthy number of reusable visual assets")
+    elif len(asset_candidates) >= 3:
+        visual_score += 6
+    else:
+        weak_signals.append("very few reusable visual assets were found")
+    if any(item.get("type") in {"og-image", "social-image"} for item in asset_candidates):
+        visual_score += 4
+    visual_score = min(visual_score, 20)
+
+    structure_score = 0.0
+    if structure.get("h1_count", 0) >= 1:
+        structure_score += 4
+    else:
+        weak_signals.append("no H1 heading was detected")
+    if structure.get("h2_count", 0) >= 3:
+        structure_score += 6
+    elif structure.get("h2_count", 0) == 0:
+        weak_signals.append("section hierarchy looks thin")
+    if structure.get("section_count", 0) >= 4:
+        structure_score += 6
+    elif structure.get("section_count", 0) <= 1:
+        weak_signals.append("page structure appears shallow")
+    if structure.get("nav_link_count", 0) >= 1:
+        structure_score += 4
+    structure_score = min(structure_score, 20)
+
+    website_quality_score = clamp_score(
+        content_score + contact_score + conversion_score + trust_score + visual_score + structure_score
+    )
+    redesign_opportunity_score = clamp_score(100 - website_quality_score)
+    completeness_score = float(completeness.get("score", 0.0) or 0.0)
+    confidence = round(
+        clamp_score((completeness_score * 70) + (min(len(strong_signals) + len(weak_signals), 10) * 3), 0, 100),
+        1,
+    )
+
+    if website_quality_score >= 70:
+        qualification_status = "skip"
+        summary = "The site already shows enough structure, trust, and conversion signals that it is a weaker redesign outreach target."
+    elif website_quality_score >= 45:
+        qualification_status = "review"
+        summary = "The site has mixed quality signals. It may still be worth outreach, but it is not an obvious weak-site target."
+    else:
+        qualification_status = "target"
+        summary = "The site looks weak enough to justify redesign outreach."
+
+    quality_tier = "strong" if website_quality_score >= 70 else ("mid" if website_quality_score >= 45 else "weak")
+
+    return {
+        "website_quality_score": round(website_quality_score, 1),
+        "redesign_opportunity_score": round(redesign_opportunity_score, 1),
+        "qualification_status": qualification_status,
+        "is_candidate": qualification_status == "target",
+        "quality_tier": quality_tier,
+        "confidence": confidence,
+        "summary": summary,
+        "strong_signals": strong_signals[:8],
+        "weak_signals": weak_signals[:8],
+        "component_scores": {
+            "content_depth": round(content_score, 1),
+            "contact_accessibility": round(contact_score, 1),
+            "conversion_clarity": round(conversion_score, 1),
+            "trust_signals": round(trust_score, 1),
+            "visual_assets": round(visual_score, 1),
+            "site_structure": round(structure_score, 1),
+        },
+        "structure_summary": structure,
+        "completeness": completeness,
+    }
 
 
 def enrich_source_context(request: dict, source_summary: dict) -> dict:
@@ -2362,6 +2609,41 @@ def process_job(job_id: str, request: dict) -> None:
         safe_send_callback(job_id, request["callback_url"], failed_state)
 
 
+def run_qualification(request: dict) -> dict:
+    qualification_id = f"qual_{uuid.uuid4().hex[:12]}"
+    run_dir = QUALIFICATION_RUNS_DIR / qualification_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    source_context = analyze_site_context(run_dir, request)
+    assessment = assess_website_quality(request, source_context)
+    response = {
+        "qualification_id": qualification_id,
+        "created_at": now_iso(),
+        "request": {
+            "website_url": request["website_url"],
+            "hostname": request["hostname"],
+            "industry": request["industry"],
+            "company_name": request.get("company_name", ""),
+            "lead_id": request.get("lead_id", ""),
+            "source_row_id": request.get("source_row_id", ""),
+            "qualification_notes": request.get("qualification_notes", ""),
+        },
+        "business_profile": source_context.get("business_profile", {}),
+        "source_summary": source_context.get("source", {}).get("summary", {}),
+        "assessment": assessment,
+        "artifacts": {
+            "run_dir": str(run_dir),
+            "source_root": source_context.get("source", {}).get("source_root"),
+            "index_file": source_context.get("source", {}).get("index_file"),
+            "business_profile": str(run_dir / "source" / "analysis" / "business-profile.json"),
+            "design_engine": str(run_dir / "source" / "analysis" / "design-engine.json"),
+            "concept_blueprint": str(run_dir / "source" / "analysis" / "concept-blueprint.json"),
+        },
+    }
+    write_json(run_dir / "qualification.json", response)
+    return response
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "WebsiteRedesignRunner/0.2"
 
@@ -2392,6 +2674,7 @@ class Handler(BaseHTTPRequestHandler):
                     "public_base_url": PUBLIC_BASE_URL,
                     "firecrawl_url": FIRECRAWL_URL,
                     "model_policy": "deny-openrouter",
+                    "endpoints": ["/health", "/skills", "/jobs", "/qualify", "/qualification-runs/<id>"],
                     "generator_profiles": sorted(ALLOWED_GENERATOR_PROFILES),
                     "design_families": sorted(ALLOWED_DESIGN_FAMILIES),
                     "image_strategies": sorted(ALLOWED_IMAGE_STRATEGIES),
@@ -2423,6 +2706,16 @@ class Handler(BaseHTTPRequestHandler):
                     "content": skill_path.read_text(encoding="utf-8"),
                 }
             )
+            return
+
+        if parsed.path.startswith("/qualification-runs/"):
+            qualification_id = parsed.path.strip("/").split("/")[1]
+            run_dir = QUALIFICATION_RUNS_DIR / qualification_id
+            report_path = run_dir / "qualification.json"
+            if not report_path.exists():
+                self._send_json({"error": "qualification run not found"}, status=404)
+                return
+            self._send_file(report_path, "application/json; charset=utf-8")
             return
 
         if parsed.path.startswith("/jobs/"):
@@ -2511,6 +2804,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/qualify":
+            try:
+                payload = parse_json_body(self)
+                request = normalize_qualification_request(payload)
+                result = run_qualification(request)
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, status=400)
+                return
+            self._send_json(result, status=HTTPStatus.OK)
+            return
+
         if parsed.path != "/jobs":
             self._send_json({"error": "not found"}, status=404)
             return
