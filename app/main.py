@@ -3,6 +3,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import threading
 import time
@@ -28,16 +29,24 @@ FIRECRAWL_URL = os.environ.get("WEBSITE_REDESIGN_FIRECRAWL_URL", "http://127.0.0
 FIRECRAWL_SCRAPE_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_FIRECRAWL_TIMEOUT", "90"))
 SEO_AUDIT_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_SEO_AUDIT_TIMEOUT", "120"))
 IMPECCABLE_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_TIMEOUT", "180"))
+LIGHTHOUSE_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_LIGHTHOUSE_TIMEOUT", "180"))
+AXE_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_AXE_TIMEOUT", "180"))
 DEFAULT_CONTENT_CRITIQUE = os.environ.get("WEBSITE_REDESIGN_CONTENT_CRITIQUE", "true")
 DEFAULT_CONTENT_AUTOFIX = os.environ.get("WEBSITE_REDESIGN_CONTENT_AUTOFIX", "true")
 DEFAULT_SEO_CRITIQUE = os.environ.get("WEBSITE_REDESIGN_SEO_CRITIQUE", "true")
 DEFAULT_SEO_AUTOFIX = os.environ.get("WEBSITE_REDESIGN_SEO_AUTOFIX", "true")
 DEFAULT_IMPECCABLE_CRITIQUE = os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_CRITIQUE", "true")
 DEFAULT_IMPECCABLE_AUTOFIX = os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_AUTOFIX", "true")
+DEFAULT_LIGHTHOUSE_CRITIQUE = os.environ.get("WEBSITE_REDESIGN_LIGHTHOUSE_CRITIQUE", "true")
+DEFAULT_LIGHTHOUSE_AUTOFIX = os.environ.get("WEBSITE_REDESIGN_LIGHTHOUSE_AUTOFIX", "true")
+DEFAULT_AXE_CRITIQUE = os.environ.get("WEBSITE_REDESIGN_AXE_CRITIQUE", "true")
+DEFAULT_AXE_AUTOFIX = os.environ.get("WEBSITE_REDESIGN_AXE_AUTOFIX", "true")
 IMPECCABLE_MAX_FINDINGS = int(os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_MAX_FINDINGS", "8"))
 IMPECCABLE_MAX_REFINEMENT_PASSES = int(os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_MAX_REFINEMENT_PASSES", "2"))
 SEO_MAX_REFINEMENT_PASSES = int(os.environ.get("WEBSITE_REDESIGN_SEO_MAX_REFINEMENT_PASSES", "1"))
 CONTENT_MAX_REFINEMENT_PASSES = int(os.environ.get("WEBSITE_REDESIGN_CONTENT_MAX_REFINEMENT_PASSES", "1"))
+LIGHTHOUSE_MAX_REFINEMENT_PASSES = int(os.environ.get("WEBSITE_REDESIGN_LIGHTHOUSE_MAX_REFINEMENT_PASSES", "1"))
+AXE_MAX_REFINEMENT_PASSES = int(os.environ.get("WEBSITE_REDESIGN_AXE_MAX_REFINEMENT_PASSES", "1"))
 ALLOWED_GENERATOR_PROFILES = {"lean", "balanced", "quality"}
 ALLOWED_IMAGE_STRATEGIES = {"source-only", "source-first", "hybrid", "stock-first"}
 ALLOWED_SOURCE_EXPANSION_MODES = {"strict", "balanced", "aggressive"}
@@ -260,6 +269,47 @@ def run_command(
     )
 
 
+def reserve_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def start_dist_server(job_dir: Path) -> tuple[subprocess.Popen, str]:
+    dist_dir = job_dir / "dist"
+    port = reserve_port()
+    process = subprocess.Popen(
+        ["python3", "-m", "http.server", str(port), "--bind", "127.0.0.1", "--directory", str(dist_dir)],
+        cwd=str(job_dir),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    url = f"http://127.0.0.1:{port}/index.html"
+    for _ in range(30):
+        if process.poll() is not None:
+            raise RuntimeError("temporary preview server exited before audits could run")
+        try:
+            with urlopen(url, timeout=2) as response:
+                if response.status == 200:
+                    return process, url
+        except Exception:
+            time.sleep(0.25)
+    process.terminate()
+    raise RuntimeError("temporary preview server did not become ready in time")
+
+
+def stop_dist_server(process: subprocess.Popen | None) -> None:
+    if not process:
+        return
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+
 def safe_relativize(path: Path, base: Path) -> str:
     try:
         return str(path.relative_to(base))
@@ -474,7 +524,7 @@ def build_concept_blueprint(request: dict, business_profile: dict, source_summar
         "image_policy": image_policy,
         "asset_strength": "strong" if len(source_assets) >= 6 else ("moderate" if len(source_assets) >= 3 else "weak"),
         "content_focus": business_profile.get("core_highlights", [])[:5],
-        "footer_requirements": "Include address, hours, phone, and an actual map/embed or clear directions module tied to the real business location.",
+        "footer_requirements": "Include a dedicated footer/location module with address, hours, phone, and a real Google Map embed whenever practical. At minimum, include a real directions link tied to the actual business location.",
     }
 
 
@@ -619,6 +669,10 @@ def normalize_request(payload: dict) -> dict:
         "seo_autofix": parse_bool(payload.get("seo_autofix"), parse_bool(DEFAULT_SEO_AUTOFIX, True)),
         "impeccable_critique": parse_bool(payload.get("impeccable_critique"), parse_bool(DEFAULT_IMPECCABLE_CRITIQUE, True)),
         "impeccable_autofix": parse_bool(payload.get("impeccable_autofix"), parse_bool(DEFAULT_IMPECCABLE_AUTOFIX, True)),
+        "lighthouse_critique": parse_bool(payload.get("lighthouse_critique"), parse_bool(DEFAULT_LIGHTHOUSE_CRITIQUE, True)),
+        "lighthouse_autofix": parse_bool(payload.get("lighthouse_autofix"), parse_bool(DEFAULT_LIGHTHOUSE_AUTOFIX, True)),
+        "axe_critique": parse_bool(payload.get("axe_critique"), parse_bool(DEFAULT_AXE_CRITIQUE, True)),
+        "axe_autofix": parse_bool(payload.get("axe_autofix"), parse_bool(DEFAULT_AXE_AUTOFIX, True)),
     }
 
 
@@ -1779,6 +1833,222 @@ def run_seo_pipeline(job_id: str, job_dir: Path, request: dict) -> dict:
     return audit
 
 
+def run_node_json_script(script_name: str, args: list[str], cwd: Path, timeout: int) -> tuple[dict, dict]:
+    script_path = BASE_DIR / "app" / script_name
+    env = os.environ.copy()
+    env["CHROME_PATH"] = env.get("CHROME_PATH", "/usr/bin/chromium")
+    result = run_command(["node", str(script_path), *args], cwd=cwd, env=env, timeout=timeout)
+    stdout_payload = {}
+    if result.stdout.strip():
+        try:
+            stdout_payload = json.loads(result.stdout)
+        except Exception:
+            stdout_payload = {}
+    log = {
+        "exit_code": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+    }
+    return stdout_payload, log
+
+
+def audit_with_lighthouse(job_dir: Path, request: dict) -> dict:
+    index_file = job_dir / "dist" / "index.html"
+    if not index_file.exists():
+        raise RuntimeError("dist/index.html missing for Lighthouse audit")
+
+    server = None
+    try:
+        server, url = start_dist_server(job_dir)
+        output_path = job_dir / "lighthouse-audit.json"
+        payload, log = run_node_json_script(
+            "run_lighthouse_audit.mjs",
+            [url, str(output_path)],
+            cwd=job_dir,
+            timeout=LIGHTHOUSE_TIMEOUT,
+        )
+    finally:
+        stop_dist_server(server)
+
+    log_path = job_dir / "lighthouse-audit.log"
+    log_path.write_text(
+        f"exit_code={log['exit_code']}\n\nSTDOUT:\n{log['stdout']}\n\nSTDERR:\n{log['stderr']}\n",
+        encoding="utf-8",
+    )
+    if not payload:
+        payload = {
+            "status": "error",
+            "findingsCount": 0,
+            "findings": [],
+            "scores": {},
+            "error": "No Lighthouse payload returned.",
+        }
+    payload["log"] = str(log_path)
+    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return payload
+
+
+def format_lighthouse_finding(item: dict) -> str:
+    return f"- [{item.get('rule', 'issue')}] severity={item.get('severity', 'unknown')} — {item.get('message', '')}"
+
+
+def run_lighthouse_refinement(job_dir: Path, request: dict, audit: dict) -> dict:
+    findings = audit.get("findings", [])[:10]
+    findings_block = "\n".join(format_lighthouse_finding(item) for item in findings) or "- No Lighthouse findings provided"
+    prompt = f"""You are running a targeted Lighthouse-driven refinement pass on an existing static site in ./dist.
+
+Edit only files inside ./dist and ./dist/redesign-summary.md.
+Do not rebuild from scratch. Preserve the current design concept and business identity.
+
+Fix these Lighthouse findings:
+{findings_block}
+
+Requirements:
+- Improve SEO, best-practices, and performance issues without flattening the design.
+- Reduce avoidable render-blocking patterns and oversized decorative overhead where practical.
+- Keep metadata, structured data, and crawlable text content intact or improved.
+- Do not remove the location module, menu highlights, or proof sections while optimizing.
+- Append a short 'Lighthouse refinement' note to ./dist/redesign-summary.md describing what changed.
+"""
+    prompt_file = job_dir / "lighthouse-refinement-prompt.txt"
+    prompt_file.write_text(prompt, encoding="utf-8")
+    local_config_path = build_local_opencode_config(job_dir)
+    env = os.environ.copy()
+    env["OPENCODE_CONFIG"] = str(local_config_path)
+    result = run_command(["opencode", "run", prompt, "--model", MODEL, "--dir", str(job_dir)], cwd=job_dir, env=env, timeout=3600)
+    log_path = job_dir / "lighthouse-refinement.log"
+    log_path.write_text(
+        f"exit_code={result.returncode}\n\nSTDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}\n",
+        encoding="utf-8",
+    )
+    return {"exit_code": result.returncode, "log": str(log_path), "prompt": str(prompt_file), "findings_used": len(findings)}
+
+
+def run_lighthouse_pipeline(job_id: str, job_dir: Path, request: dict) -> dict:
+    audit = audit_with_lighthouse(job_dir, request)
+    passes: list[dict] = []
+    if audit.get("status") != "findings" or not request.get("lighthouse_autofix", True):
+        audit["passes"] = passes
+        return audit
+
+    for pass_index in range(1, LIGHTHOUSE_MAX_REFINEMENT_PASSES + 1):
+        update_state(job_id, step="running-lighthouse-refinement", lighthouse=audit)
+        refinement = run_lighthouse_refinement(job_dir, request, audit)
+        next_audit = None
+        if refinement.get("exit_code") == 0:
+            next_audit = audit_with_lighthouse(job_dir, request)
+        pass_report = {"pass": pass_index, "refinement": refinement, "post_refinement": next_audit}
+        passes.append(pass_report)
+        audit["passes"] = passes
+        audit["refinement"] = refinement
+        audit["post_refinement"] = next_audit
+        if not next_audit or next_audit.get("status") != "findings":
+            break
+        audit = next_audit
+
+    audit["passes"] = passes
+    return audit
+
+
+def audit_with_axe(job_dir: Path, request: dict) -> dict:
+    index_file = job_dir / "dist" / "index.html"
+    if not index_file.exists():
+        raise RuntimeError("dist/index.html missing for axe audit")
+
+    server = None
+    try:
+        server, url = start_dist_server(job_dir)
+        output_path = job_dir / "axe-audit.json"
+        payload, log = run_node_json_script(
+            "run_axe_audit.mjs",
+            [url, str(output_path)],
+            cwd=job_dir,
+            timeout=AXE_TIMEOUT,
+        )
+    finally:
+        stop_dist_server(server)
+
+    log_path = job_dir / "axe-audit.log"
+    log_path.write_text(
+        f"exit_code={log['exit_code']}\n\nSTDOUT:\n{log['stdout']}\n\nSTDERR:\n{log['stderr']}\n",
+        encoding="utf-8",
+    )
+    if not payload:
+        payload = {
+            "status": "error",
+            "findingsCount": 0,
+            "findings": [],
+            "error": "No axe payload returned.",
+        }
+    payload["log"] = str(log_path)
+    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return payload
+
+
+def format_axe_finding(item: dict) -> str:
+    nodes = item.get("nodes", [])[:2]
+    targets = ", ".join(" / ".join(node.get("target", [])) for node in nodes if node.get("target"))
+    suffix = f" | targets: {targets}" if targets else ""
+    return f"- [{item.get('rule', 'issue')}] severity={item.get('severity', 'unknown')} — {item.get('message', '')}{suffix}"
+
+
+def run_axe_refinement(job_dir: Path, request: dict, audit: dict) -> dict:
+    findings = audit.get("findings", [])[:10]
+    findings_block = "\n".join(format_axe_finding(item) for item in findings) or "- No accessibility findings provided"
+    prompt = f"""You are running a targeted accessibility refinement pass on an existing static site in ./dist.
+
+Edit only files inside ./dist and ./dist/redesign-summary.md.
+Do not rebuild from scratch. Preserve the current design concept and business identity.
+
+Fix these accessibility findings:
+{findings_block}
+
+Requirements:
+- Resolve contrast, semantics, labeling, and structure issues while preserving the overall design quality.
+- Use real text labels and descriptive alt text where needed.
+- Preserve menu, location, proof, and CTA clarity.
+- Append a short 'Accessibility refinement' note to ./dist/redesign-summary.md describing what changed.
+"""
+    prompt_file = job_dir / "axe-refinement-prompt.txt"
+    prompt_file.write_text(prompt, encoding="utf-8")
+    local_config_path = build_local_opencode_config(job_dir)
+    env = os.environ.copy()
+    env["OPENCODE_CONFIG"] = str(local_config_path)
+    result = run_command(["opencode", "run", prompt, "--model", MODEL, "--dir", str(job_dir)], cwd=job_dir, env=env, timeout=3600)
+    log_path = job_dir / "axe-refinement.log"
+    log_path.write_text(
+        f"exit_code={result.returncode}\n\nSTDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}\n",
+        encoding="utf-8",
+    )
+    return {"exit_code": result.returncode, "log": str(log_path), "prompt": str(prompt_file), "findings_used": len(findings)}
+
+
+def run_axe_pipeline(job_id: str, job_dir: Path, request: dict) -> dict:
+    audit = audit_with_axe(job_dir, request)
+    passes: list[dict] = []
+    if audit.get("status") != "findings" or not request.get("axe_autofix", True):
+        audit["passes"] = passes
+        return audit
+
+    for pass_index in range(1, AXE_MAX_REFINEMENT_PASSES + 1):
+        update_state(job_id, step="running-axe-refinement", axe=audit)
+        refinement = run_axe_refinement(job_dir, request, audit)
+        next_audit = None
+        if refinement.get("exit_code") == 0:
+            next_audit = audit_with_axe(job_dir, request)
+        pass_report = {"pass": pass_index, "refinement": refinement, "post_refinement": next_audit}
+        passes.append(pass_report)
+        audit["passes"] = passes
+        audit["refinement"] = refinement
+        audit["post_refinement"] = next_audit
+        if not next_audit or next_audit.get("status") != "findings":
+            break
+        audit = next_audit
+
+    audit["passes"] = passes
+    return audit
+
+
 def parse_impeccable_json(output: str) -> list[dict]:
     output = (output or "").strip()
     if not output:
@@ -2024,6 +2294,26 @@ def process_job(job_id: str, request: dict) -> None:
                 seo_result = {"status": "error", "error": str(exc)}
                 update_state(job_id, seo=seo_result)
 
+        lighthouse_result = None
+        if not request["dry_run"] and request.get("lighthouse_critique", True):
+            update_state(job_id, step="running-lighthouse")
+            try:
+                lighthouse_result = run_lighthouse_pipeline(job_id, job_dir, request)
+                update_state(job_id, lighthouse=lighthouse_result)
+            except Exception as exc:
+                lighthouse_result = {"status": "error", "error": str(exc)}
+                update_state(job_id, lighthouse=lighthouse_result)
+
+        axe_result = None
+        if not request["dry_run"] and request.get("axe_critique", True):
+            update_state(job_id, step="running-axe")
+            try:
+                axe_result = run_axe_pipeline(job_id, job_dir, request)
+                update_state(job_id, axe=axe_result)
+            except Exception as exc:
+                axe_result = {"status": "error", "error": str(exc)}
+                update_state(job_id, axe=axe_result)
+
         critique_result = None
         if not request["dry_run"] and request.get("impeccable_critique", True):
             update_state(job_id, step="running-impeccable")
@@ -2041,6 +2331,8 @@ def process_job(job_id: str, request: dict) -> None:
             applied_skills=opencode_result.get("applied_skills", []),
             content=content_result,
             seo=seo_result,
+            lighthouse=lighthouse_result,
+            axe=axe_result,
             impeccable=critique_result,
         )
         preview_url = publish_preview(job_dir, request["client_slug"])

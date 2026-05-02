@@ -70,6 +70,10 @@ The runner now exposes the main operator levers directly in the job payload:
 - `content_autofix`: if the content audit finds issues, run a short targeted refinement pass before SEO / `impeccable`
 - `seo_critique`: run the built-in SEO audit on generated `dist/`
 - `seo_autofix`: if the SEO audit finds issues, run a short targeted SEO refinement pass before `impeccable`
+- `lighthouse_critique`: run a Lighthouse-based SEO/performance/best-practices audit on generated `dist/`
+- `lighthouse_autofix`: if Lighthouse finds issues, run a short targeted refinement pass before `impeccable`
+- `axe_critique`: run an axe accessibility audit on generated `dist/`
+- `axe_autofix`: if axe finds issues, run a short targeted accessibility refinement pass before `impeccable`
 - `impeccable_critique`: run the Impeccable detector on generated `dist/`
 - `impeccable_autofix`: if Impeccable finds issues, run a short targeted refinement pass
 - `source_expansion_mode`: `strict`, `balanced`, or `aggressive`
@@ -119,6 +123,8 @@ This makes the design system tunable without changing Python code:
 - after generation, the runner writes `/jobs/<job_id>/content-audit.json` and can run a compact content-integrity repair pass before SEO and `impeccable`
 - the first generation pass also receives explicit SEO requirements: title, description, canonical, Open Graph, Twitter card, heading structure, alt text, JSON-LD, and footer/location consistency
 - after generation, the runner writes `/jobs/<job_id>/seo-audit.json` and can run a compact SEO repair pass before `impeccable`
+- after generation, the runner writes `/jobs/<job_id>/lighthouse-audit.json` and can run a compact Lighthouse-driven repair pass before `impeccable`
+- after generation, the runner writes `/jobs/<job_id>/axe-audit.json` and can run a compact accessibility repair pass before `impeccable`
 - the runner now writes `/jobs/<job_id>/prompt.metrics.json` so you can see estimated token spend by prompt section
 - after generation, the runner can run `impeccable detect --json dist/` and optionally launch a compact repair pass against only the generated preview files
 - if Firecrawl is unavailable for the source site, the runner falls back to a direct HTML fetch so jobs still run

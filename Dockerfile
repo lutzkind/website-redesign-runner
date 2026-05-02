@@ -5,7 +5,16 @@ WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 
 RUN pip install --no-cache-dir -r /app/requirements.txt
-RUN npm install -g opencode-ai@latest impeccable@latest
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends chromium \
+    && rm -rf /var/lib/apt/lists/*
+RUN npm install -g \
+    opencode-ai@latest \
+    impeccable@latest \
+    lighthouse@latest \
+    chrome-launcher@latest \
+    playwright-core@latest \
+    axe-core@latest
 
 COPY app /app/app
 COPY skills /app/skills
