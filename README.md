@@ -153,9 +153,12 @@ This makes the design system tunable without changing Python code:
 - the runner scores source completeness and, when needed, uses Firecrawl search to enrich weak websites with external business context
 - the runner writes `/jobs/<job_id>/source/analysis/business-profile.json` so prompts can use compact structured facts instead of raw scrape dumps
 - the runner selects an internal design family and writes `/jobs/<job_id>/source/analysis/design-engine.json`
+- the runner builds a MagicUI-inspired component vocabulary and writes `/jobs/<job_id>/source/analysis/component-blueprint.json`
 - the runner generates a bespoke concept blueprint and writes `/jobs/<job_id>/source/analysis/concept-blueprint.json`
 - the runner generates a content blueprint and writes `/jobs/<job_id>/source/analysis/content-blueprint.json`
 - the runner generates an SEO blueprint and writes `/jobs/<job_id>/source/analysis/seo-blueprint.json`
+- the first generation pass now receives concrete component patterns for hero/nav/CTA/gallery/footer plus industry subtype adaptations instead of relying only on abstract family prose
+- the content planner now defines required sections and rewrite targets so the model rebuilds key business content like menus/services instead of just restyling source copy
 - the first generation pass now receives explicit anti-pattern guardrails inspired by `impeccable` before any post-generation critique runs
 - the first generation pass now also receives content-integrity constraints: rewrite the source, do not link back to the legacy site, rebuild critical content like menus/services inside the redesign, and never invent unsupported reviews or ratings
 - after generation, the runner writes `/jobs/<job_id>/content-audit.json` and can run a compact content-integrity repair pass before SEO and `impeccable`
@@ -182,6 +185,17 @@ Available families:
 - `modern-approachable`
 
 The selector infers a family from the industry, design goal, brand notes, and source content unless you override it with `design_family`.
+
+The family is no longer the only visual driver. Each family now expands into a MagicUI-inspired component blueprint:
+
+- hero pattern
+- nav pattern
+- CTA pattern
+- gallery pattern
+- proof pattern
+- footer/location pattern
+
+This gives the first draft more concrete UI structure than the earlier prose-only family descriptions.
 
 Restaurant note:
 

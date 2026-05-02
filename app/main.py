@@ -123,6 +123,81 @@ DESIGN_FAMILY_LIBRARY = {
     },
 }
 
+MAGICUI_COMPONENT_LIBRARY = {
+    "editorial-luxury": {
+        "hero_pattern": "full-bleed image hero with dark overlay, restrained top nav, oversized serif headline, and one primary reservation CTA",
+        "nav_pattern": "minimal transparent nav that resolves into a solid dark bar on scroll with one standout CTA button",
+        "cta_pattern": "pill or soft-rectangle CTA with premium contrast, subtle shadow, and understated hover lift",
+        "surface_pattern": "layered warm surfaces with framed imagery, thin borders, and glass-free depth",
+        "gallery_pattern": "editorial staggered image grid with asymmetric crops and occasional full-width image breaks",
+        "proof_pattern": "compact proof strip and quote cards rather than generic testimonial sliders",
+        "menu_pattern": "curated menu spotlight cards with daypart grouping, featured dish callouts, and premium framing",
+        "footer_pattern": "dark closing section with location, hours, contact CTA, and embedded map/directions block",
+        "motion_pattern": "subtle reveal, opacity, and translate-only transitions; no parallax gimmicks",
+        "decor_pattern": "soft accent glows, ruled dividers, and tasteful badge chips instead of startup icon walls",
+    },
+    "warm-hospitality": {
+        "hero_pattern": "welcoming split or layered hero with food-led photography, short appetite-first headline, and immediate visit/order CTA",
+        "nav_pattern": "friendly compact nav with rounded CTA and clear menu/location anchors",
+        "cta_pattern": "rounded warm CTA buttons with strong text contrast and obvious tap targets",
+        "surface_pattern": "soft elevated cards, warm background bands, and cozy content containers with visible breathing room",
+        "gallery_pattern": "collage-style gallery clusters with varied image sizes and appetite-first crops",
+        "proof_pattern": "trust strip, family story block, and short review-style proof only when evidence exists",
+        "menu_pattern": "visual menu highlight modules organized by breakfast/lunch/dinner or signature specialties, built into the page",
+        "footer_pattern": "high-trust footer with address, phone, hours, map embed or directions link, and quick visit CTA",
+        "motion_pattern": "gentle reveal and hover polish only; no distracting scene changes",
+        "decor_pattern": "warm chips, badges, dividers, and subtle grain/texture cues without fake retro clutter",
+    },
+    "cinematic-bold": {
+        "hero_pattern": "immersive dark hero with dramatic crop, bold headline, and one dominant CTA with one secondary text action",
+        "nav_pattern": "thin high-contrast nav with compact menu and strong CTA emphasis",
+        "cta_pattern": "high-contrast button pair with assertive hover polish and strong spacing",
+        "surface_pattern": "dark layered panels with heavy contrast and oversized section framing",
+        "gallery_pattern": "large cinematic tiles and alternating panorama breaks",
+        "proof_pattern": "oversized trust metrics and bold quote band instead of small cards",
+        "menu_pattern": "statement feature blocks and signature items with dramatic imagery and concise copy",
+        "footer_pattern": "bold closing block with direct contact, venue info, and location utility",
+        "motion_pattern": "cinematic fade/translate only; no flashy transforms",
+        "decor_pattern": "accent bars, oversized numbers, and strong section transitions without gradients",
+    },
+    "crisp-trust": {
+        "hero_pattern": "clarity-first hero with concise promise, supporting proof, and immediate consultation CTA",
+        "nav_pattern": "solid trust-first nav with sticky CTA and simple anchor structure",
+        "cta_pattern": "clean rectangular CTA with strong accessibility contrast and no decorative effects",
+        "surface_pattern": "bright structured cards with crisp borders and controlled shadows",
+        "gallery_pattern": "sparingly used supportive imagery with clean framing rather than decorative collage",
+        "proof_pattern": "metrics strip, credential cards, and FAQ/proof accordion modules",
+        "menu_pattern": "service or offering modules arranged in digestible cards rather than promotional blurbs",
+        "footer_pattern": "service-area and contact footer with map/directions, NAP, and structured trust links",
+        "motion_pattern": "minimal utility-focused transitions only",
+        "decor_pattern": "precision dividers, badges, and layout accents with no ornamental noise",
+    },
+    "craftsman-premium": {
+        "hero_pattern": "outcome-led hero with strong service promise, phone CTA, and proof badges",
+        "nav_pattern": "practical nav with visible phone/quote CTA and sticky conversion row",
+        "cta_pattern": "large dependable CTA bars with clear action verbs and strong contrast",
+        "surface_pattern": "solid service cards, textured dark bands, and before/after modules",
+        "gallery_pattern": "project or craftsmanship grid with stronger documentary treatment",
+        "proof_pattern": "trust badges, service guarantees, and process timeline modules",
+        "menu_pattern": "service package or offering cards with clear scopes and proof points",
+        "footer_pattern": "service-area footer with phone, hours, address, and map/directions utility",
+        "motion_pattern": "limited hover and reveal motion only",
+        "decor_pattern": "industrial accents, linework, and grounded visual weight without tech styling",
+    },
+    "modern-approachable": {
+        "hero_pattern": "balanced modern hero with approachable imagery, concise positioning, and clear primary CTA",
+        "nav_pattern": "simple high-legibility nav with one strong CTA and tight section anchors",
+        "cta_pattern": "clean rounded CTA with subtle depth and strong mobile sizing",
+        "surface_pattern": "modular cards, clean background bands, and generous spacing",
+        "gallery_pattern": "tidy alternating media blocks and modular image cards",
+        "proof_pattern": "compact story/proof modules and clean FAQ sections",
+        "menu_pattern": "digestible highlight cards or mini-feature grids built into the main page",
+        "footer_pattern": "clean footer with contact block, hours if relevant, and map/directions support",
+        "motion_pattern": "light stagger and hover polish only",
+        "decor_pattern": "soft accent shapes and subtle dividers without trend-chasing visuals",
+    },
+}
+
 INDUSTRY_DEFAULT_FAMILIES = {
     "restaurant": "editorial-luxury",
     "cafe": "warm-hospitality",
@@ -431,6 +506,76 @@ def infer_conversion_priority(industry: str) -> list[str]:
     return ["primary-cta", "trust", "clarity"]
 
 
+def infer_business_subtype(request: dict, business_profile: dict, source_summary: dict) -> str:
+    industry = request["industry"]
+    text = " ".join(
+        [
+            source_summary.get("title", ""),
+            source_summary.get("description", ""),
+            business_profile.get("business_name", ""),
+            " ".join(business_profile.get("core_highlights", [])),
+        ]
+    ).lower()
+    if industry == "restaurant":
+        if any(term in text for term in ("diner", "breakfast", "family-owned", "all day breakfast", "comfort food")):
+            return "restaurant-diner"
+        if any(term in text for term in ("cafe", "coffee", "bakery")):
+            return "restaurant-cafe"
+        if any(term in text for term in ("fine dining", "steak", "cocktail", "wine", "chef")):
+            return "restaurant-upscale"
+        return "restaurant-general"
+    if industry in {"plumber", "electrician", "hvac", "contractor"}:
+        return "local-trades"
+    if industry in {"dentist", "medical", "legal", "consulting"}:
+        return "trust-service"
+    return industry or "general"
+
+
+def build_component_blueprint(request: dict, design_engine: dict, business_profile: dict, source_summary: dict) -> dict:
+    family_key = design_engine.get("family", "modern-approachable")
+    library = MAGICUI_COMPONENT_LIBRARY.get(family_key, MAGICUI_COMPONENT_LIBRARY["modern-approachable"])
+    subtype = infer_business_subtype(request, business_profile, source_summary)
+
+    adaptations = []
+    if subtype == "restaurant-diner":
+        adaptations = [
+            "Favor honest appetite-led photography over moody luxury staging.",
+            "Keep menu highlights immediately scannable and daypart-driven.",
+            "Use friendlier, neighborhood-scale typography and warmer surfaces.",
+            "Prefer proof strips, service warmth, and visit confidence over aspirational brand theater.",
+        ]
+    elif subtype == "restaurant-upscale":
+        adaptations = [
+            "Push stronger editorial spacing and more restrained copy density.",
+            "Use fewer but larger hero and gallery moments.",
+        ]
+    elif subtype == "local-trades":
+        adaptations = [
+            "Emphasize conversion bars, trust badges, and service cards over decorative gallery patterns.",
+        ]
+    elif subtype == "trust-service":
+        adaptations = [
+            "Bias toward clarity, proof, and FAQ structure instead of high-drama image composition.",
+        ]
+
+    return {
+        "family": family_key,
+        "business_subtype": subtype,
+        "source": "magicui-inspired internal component vocabulary",
+        "hero_pattern": library["hero_pattern"],
+        "nav_pattern": library["nav_pattern"],
+        "cta_pattern": library["cta_pattern"],
+        "surface_pattern": library["surface_pattern"],
+        "gallery_pattern": library["gallery_pattern"],
+        "proof_pattern": library["proof_pattern"],
+        "menu_pattern": library["menu_pattern"],
+        "footer_pattern": library["footer_pattern"],
+        "motion_pattern": library["motion_pattern"],
+        "decor_pattern": library["decor_pattern"],
+        "adaptations": adaptations,
+    }
+
+
 def select_design_family(request: dict, business_profile: dict, source_summary: dict) -> dict:
     explicit = request.get("design_family")
     if explicit:
@@ -582,7 +727,7 @@ def build_seo_blueprint(request: dict, business_profile: dict, source_summary: d
     }
 
 
-def build_content_blueprint(request: dict, business_profile: dict, source_summary: dict) -> dict:
+def build_content_blueprint(request: dict, business_profile: dict, source_summary: dict, component_blueprint: dict) -> dict:
     menu_rule = ""
     if request["industry"] == "restaurant":
         menu_rule = (
@@ -595,7 +740,54 @@ def build_content_blueprint(request: dict, business_profile: dict, source_summar
         trust_signals.append("direct phone present")
     if business_profile.get("hours"):
         trust_signals.append("hours present")
+    subtype = component_blueprint.get("business_subtype", "general")
+    required_sections = ["hero", "proof", "contact-footer"]
+    rewrite_targets = ["hero copy", "value proposition", "CTA copy"]
+    section_notes = []
+    if subtype == "restaurant-diner":
+        required_sections = [
+            "hero",
+            "family story / trust strip",
+            "breakfast-lunch-dinner menu highlights",
+            "signature dishes or comfort-food feature band",
+            "photo-led atmosphere / gallery",
+            "visit info with hours, phone, address, and map",
+        ]
+        rewrite_targets.extend(["menu highlights", "about copy", "visit/location copy"])
+        section_notes = [
+            "Reframe the business as a beloved, reliable local diner rather than a generic restaurant.",
+            "Preserve diner warmth and familiarity while making the menu presentation more polished and persuasive.",
+            "Prefer rewritten section copy with stronger appetite appeal over literal source reuse.",
+        ]
+    elif subtype == "restaurant-upscale":
+        required_sections = [
+            "hero",
+            "positioning/story",
+            "signature menu spotlight",
+            "atmosphere gallery",
+            "reservation/location close",
+        ]
+        rewrite_targets.extend(["reservation CTA", "chef or concept story"])
+    elif subtype == "local-trades":
+        required_sections = [
+            "hero",
+            "services overview",
+            "proof strip",
+            "process / before-after",
+            "coverage area and contact close",
+        ]
+        rewrite_targets.extend(["service descriptions", "trust copy"])
+    elif subtype == "trust-service":
+        required_sections = [
+            "hero",
+            "services",
+            "proof / credentials",
+            "FAQ",
+            "contact / consultation close",
+        ]
+        rewrite_targets.extend(["service explanations", "FAQ answers"])
     return {
+        "business_subtype": subtype,
         "rewrite_rule": "Rewrite and improve source copy into sharper, clearer, more persuasive language. Preserve facts, but do not reuse long sentences verbatim.",
         "proof_rule": "Use only verifiable proof from source facts or extracted enrichment. If specific reviews, awards, or ratings are not present, do not invent them.",
         "link_rule": "Do not use legacy source-site navigation or CTA links in the redesigned preview. Keep navigation internal to the preview and rebuild important content as sections.",
@@ -603,6 +795,9 @@ def build_content_blueprint(request: dict, business_profile: dict, source_summar
         "trust_signals": trust_signals[:6],
         "review_evidence_present": bool(business_profile.get("review_snippets")),
         "forbidden_urls": [url for url in [business_profile.get("menu_url"), request["website_url"]] if url],
+        "required_sections": required_sections,
+        "rewrite_targets": rewrite_targets,
+        "section_notes": section_notes,
     }
 
 
@@ -1300,6 +1495,7 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
         "enrichment": {"results": []},
         "business_profile": {},
         "design_engine": {},
+        "component_blueprint": {},
         "concept_blueprint": {},
         "content_blueprint": {},
         "seo_blueprint": {},
@@ -1358,6 +1554,12 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
     )
 
     result["design_engine"] = select_design_family(request, result["business_profile"], source_summary)
+    result["component_blueprint"] = build_component_blueprint(
+        request,
+        result["design_engine"],
+        result["business_profile"],
+        source_summary,
+    )
     result["concept_blueprint"] = build_concept_blueprint(
         request,
         result["business_profile"],
@@ -1375,8 +1577,13 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
         request,
         result["business_profile"],
         source_summary,
+        result["component_blueprint"],
     )
     (analysis_dir / "design-engine.json").write_text(json.dumps(result["design_engine"], indent=2), encoding="utf-8")
+    (analysis_dir / "component-blueprint.json").write_text(
+        json.dumps(result["component_blueprint"], indent=2),
+        encoding="utf-8",
+    )
     (analysis_dir / "concept-blueprint.json").write_text(
         json.dumps(result["concept_blueprint"], indent=2),
         encoding="utf-8",
@@ -1457,6 +1664,7 @@ def build_prompt_parts(request: dict, job_dir: Path) -> tuple[dict, list[str]]:
     enrichment = source_context.get("enrichment", {})
     business_profile = source_context.get("business_profile", {})
     design_engine = source_context.get("design_engine", {})
+    component_blueprint = source_context.get("component_blueprint", {})
     concept_blueprint = source_context.get("concept_blueprint", {})
     content_blueprint = source_context.get("content_blueprint", {})
     seo_blueprint = source_context.get("seo_blueprint", {})
@@ -1531,12 +1739,19 @@ Working directives:
 """
 
     content_integrity_block = f"""Content integrity requirements:
+- Business subtype: {content_blueprint.get('business_subtype', 'general')}
 - Rewrite rule: {content_blueprint.get('rewrite_rule', '')}
 - Proof rule: {content_blueprint.get('proof_rule', '')}
 - Link rule: {content_blueprint.get('link_rule', '')}
 - Menu rule: {content_blueprint.get('menu_rule', 'Not applicable')}
 - Trust signals that may be emphasized:
 {chr(10).join(f"  - {item}" for item in content_blueprint.get('trust_signals', [])) or '  - None extracted'}
+- Required sections:
+{chr(10).join(f"  - {item}" for item in content_blueprint.get('required_sections', [])) or '  - None defined'}
+- Rewrite targets:
+{chr(10).join(f"  - {item}" for item in content_blueprint.get('rewrite_targets', [])) or '  - None defined'}
+- Section notes:
+{chr(10).join(f"  - {item}" for item in content_blueprint.get('section_notes', [])) or '  - None'}
 - Forbidden source URLs:
 {chr(10).join(f"  - {item}" for item in content_blueprint.get('forbidden_urls', [])) or '  - None'}
 """
@@ -1566,6 +1781,23 @@ Working directives:
 - Component language: {design_engine.get('profile', {}).get('components', '')}
 - Motion rule: {design_engine.get('profile', {}).get('motion', '')}
 - Family anti-patterns: {design_engine.get('profile', {}).get('anti_patterns', '')}
+"""
+
+    component_blueprint_block = f"""MagicUI-inspired component blueprint:
+- Source: {component_blueprint.get('source', 'internal component vocabulary')}
+- Business subtype: {component_blueprint.get('business_subtype', 'general')}
+- Hero pattern: {component_blueprint.get('hero_pattern', '')}
+- Nav pattern: {component_blueprint.get('nav_pattern', '')}
+- CTA pattern: {component_blueprint.get('cta_pattern', '')}
+- Surface pattern: {component_blueprint.get('surface_pattern', '')}
+- Gallery pattern: {component_blueprint.get('gallery_pattern', '')}
+- Proof pattern: {component_blueprint.get('proof_pattern', '')}
+- Menu / offering pattern: {component_blueprint.get('menu_pattern', '')}
+- Footer pattern: {component_blueprint.get('footer_pattern', '')}
+- Motion pattern: {component_blueprint.get('motion_pattern', '')}
+- Decorative pattern: {component_blueprint.get('decor_pattern', '')}
+- Family-specific adaptations:
+{chr(10).join(f"  - {item}" for item in component_blueprint.get('adaptations', [])) or '  - None'}
 """
 
     concept_blueprint_block = f"""Concept blueprint:
@@ -1603,11 +1835,13 @@ Working directives:
 - The source website is for business facts, proof, usable assets, and service/menu details, not for visual inspiration.
 - Do not imitate or scrape public reference websites. Create a bespoke concept from the internal design family.
 - Re-express the source business in the selected family’s typography, spacing, component language, and section rhythm.
+- Treat the MagicUI-inspired component blueprint as concrete UI direction for the first pass, not optional inspiration.
 - The first draft should already feel art-directed and prospect-ready, not like a template adaptation.
 - The first draft must also be SEO-ready: title, description, canonical, OG/Twitter metadata, one clear H1, and valid LocalBusiness-style JSON-LD should already be present.
 - Include a real map or directions embed/link in the closing/footer area using the actual business location. Do not replace the location module with decorative imagery.
 - Do not send users back to the old website for key content. Rebuild critical content like menus, services, FAQs, and offers directly inside the redesign.
 - If trustworthy review copy or ratings are not available in the extracted source context, omit testimonial quotes rather than inventing them.
+- Rewrite key content according to the rewrite targets and required sections instead of restyling the source page one section at a time.
 - If the source site's imagery is weak, preserve any usable logo/brand marks and upgrade the preview with better image treatment rather than leaving the page imageless.
 - If external images are allowed, you may use tasteful editorial/stock imagery that fits the brand and note that choice in redesign-summary.md.
 - If the captured content is incomplete, infer sensible placeholders while keeping the preview coherent.
@@ -1623,6 +1857,7 @@ Working directives:
         "content_integrity": content_integrity_block,
         "source_context": source_context_block,
         "design_family": design_family_block,
+        "component_blueprint": component_blueprint_block,
         "concept_blueprint": concept_blueprint_block,
         "external_enrichment": enrichment_block,
         "asset_strategy": asset_block,
