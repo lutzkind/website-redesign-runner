@@ -116,6 +116,38 @@ def preview_url_for_public(raw_url: str, handler=None) -> str:
     return raw_url
 
 
+def runner_preview_url(slug: str) -> str:
+    if not slug:
+        return ""
+    return f"{RUNNER_BASE_URL}/preview/{slug}/"
+
+
+def public_preview_url(slug: str, handler=None) -> str:
+    if not slug:
+        return ""
+    base = resolve_public_base(handler)
+    return f"{base}/preview/{slug}/"
+
+
+def probe_preview_available(slug: str) -> bool:
+    target = runner_preview_url(slug)
+    if not target:
+        return False
+    try:
+        req = urllib.request.Request(
+            target,
+            headers={
+                "User-Agent": "WebRedesignSaaS/0.2",
+                "Accept": "text/html,application/xhtml+xml",
+            },
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=12) as response:
+            return response.status == 200 and "text/html" in (response.headers.get("Content-Type", "").lower())
+    except Exception:
+        return False
+
+
 def require_auth(handler):
     auth = handler.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
@@ -428,13 +460,33 @@ def capture_preview_screenshot(site_id: int, preview_url: str):
         return
     output_path = SCREENSHOTS_DIR / f"site-{site_id}.png"
     try:
-        subprocess.run(
-            ["node", str(BASE_DIR / "app" / "capture_screenshot.mjs"), preview_url, str(output_path)],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=90,
-        )
+        if shutil.which("wkhtmltoimage"):
+            subprocess.run(
+                [
+                    "wkhtmltoimage",
+                    "--width",
+                    "1440",
+                    "--quality",
+                    "92",
+                    "--disable-smart-width",
+                    preview_url,
+                    str(output_path),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=90,
+            )
+        elif shutil.which("node") and (BASE_DIR / "app" / "capture_screenshot.mjs").exists():
+            subprocess.run(
+                ["node", str(BASE_DIR / "app" / "capture_screenshot.mjs"), preview_url, str(output_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=90,
+            )
+        else:
+            raise RuntimeError("No screenshot renderer available.")
         db.update_site(
             site_id,
             preview_image_url=f"/api/screenshots/{output_path.name}",
@@ -445,12 +497,14 @@ def capture_preview_screenshot(site_id: int, preview_url: str):
 
 
 def queue_preview_capture(site: dict):
-    if not shutil.which("node"):
-        return
     preview_url = site.get("preview_url", "")
     if not preview_url:
         return
     if site.get("preview_image_url") and site.get("preview_image_captured_at"):
+        return
+    if not shutil.which("wkhtmltoimage") and not (
+        shutil.which("node") and (BASE_DIR / "app" / "capture_screenshot.mjs").exists()
+    ):
         return
     thread = threading.Thread(target=capture_preview_screenshot, args=(site["id"], preview_url), daemon=True)
     thread.start()
@@ -459,17 +513,31 @@ def queue_preview_capture(site: dict):
 def update_site_from_job_state(site: dict) -> dict:
     job_id = site.get("current_job_id")
     if not job_id:
+        if site.get("slug") and not site.get("preview_url") and probe_preview_available(site["slug"]):
+            db.update_site(site["id"], preview_url=public_preview_url(site["slug"]), status="preview_ready")
+            site = db.get_site(site["id"])
+            queue_preview_capture(site)
         return site
     state = fetch_runner_job_state(job_id)
     if not state:
+        if site.get("slug") and not site.get("preview_url") and probe_preview_available(site["slug"]):
+            db.update_site(site["id"], preview_url=public_preview_url(site["slug"]), status="preview_ready")
+            site = db.get_site(site["id"])
+            offer = db.get_outreach_offer_by_site(site["id"])
+            sync_offer_from_site(offer, site)
+            queue_preview_capture(site)
         return site
     updates = {}
     preview_url = preview_url_for_public(state.get("preview_url", ""))
+    if not preview_url and site.get("slug") and probe_preview_available(site["slug"]):
+        preview_url = public_preview_url(site["slug"])
     if preview_url and preview_url != site.get("preview_url"):
         updates["preview_url"] = preview_url
         updates["preview_image_url"] = None
         updates["preview_image_captured_at"] = None
-    if state.get("status") == "completed":
+    if preview_url:
+        updates["status"] = "preview_ready"
+    elif state.get("status") == "completed":
         updates["status"] = "preview_ready"
     elif state.get("status") == "failed":
         updates["status"] = "failed"
@@ -480,6 +548,7 @@ def update_site_from_job_state(site: dict) -> dict:
         site = db.get_site(site["id"])
         offer = db.get_outreach_offer_by_site(site["id"])
         sync_offer_from_site(offer, site)
+    if site.get("preview_url"):
         queue_preview_capture(site)
     return site
 
