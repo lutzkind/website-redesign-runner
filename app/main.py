@@ -51,6 +51,7 @@ AXE_MAX_REFINEMENT_PASSES = int(os.environ.get("WEBSITE_REDESIGN_AXE_MAX_REFINEM
 ALLOWED_GENERATOR_PROFILES = {"lean", "balanced", "quality"}
 ALLOWED_IMAGE_STRATEGIES = {"source-only", "source-first", "hybrid", "stock-first"}
 ALLOWED_SOURCE_EXPANSION_MODES = {"strict", "balanced", "aggressive"}
+ALLOWED_RUN_MODES = {"prospect", "refined"}
 DEFAULT_SKILLS = [
     item.strip()
     for item in os.environ.get(
@@ -59,6 +60,41 @@ DEFAULT_SKILLS = [
     ).split(",")
     if item.strip()
 ]
+
+RUN_MODE_DEFAULTS = {
+    "prospect": {
+        "generator_profile": "lean",
+        "source_expansion_mode": "strict",
+        "search_enrichment": True,
+        "search_budget": 2,
+        "content_critique": True,
+        "content_autofix": False,
+        "seo_critique": True,
+        "seo_autofix": False,
+        "impeccable_critique": False,
+        "impeccable_autofix": False,
+        "lighthouse_critique": False,
+        "lighthouse_autofix": False,
+        "axe_critique": False,
+        "axe_autofix": False,
+    },
+    "refined": {
+        "generator_profile": "balanced",
+        "source_expansion_mode": "balanced",
+        "search_enrichment": True,
+        "search_budget": 4,
+        "content_critique": True,
+        "content_autofix": True,
+        "seo_critique": True,
+        "seo_autofix": True,
+        "impeccable_critique": True,
+        "impeccable_autofix": True,
+        "lighthouse_critique": True,
+        "lighthouse_autofix": False,
+        "axe_critique": True,
+        "axe_autofix": False,
+    },
+}
 
 DESIGN_FAMILY_LIBRARY = {
     "editorial-luxury": {
@@ -1370,18 +1406,23 @@ def normalize_request(payload: dict) -> dict:
     client_slug = payload.get("client_slug") or parsed.netloc
     industry = canonicalize_industry(str(payload.get("industry") or DEFAULT_INDUSTRY))
     design_family_input = str(payload.get("design_family") or payload.get("template_family") or "").strip()
-    generator_profile = str(payload.get("generator_profile") or "balanced").strip().lower()
+    run_mode = str(payload.get("run_mode") or payload.get("delivery_mode") or "prospect").strip().lower()
+    if run_mode not in ALLOWED_RUN_MODES:
+        raise ValueError(f"run_mode must be one of: {', '.join(sorted(ALLOWED_RUN_MODES))}")
+    mode_defaults = RUN_MODE_DEFAULTS[run_mode]
+
+    generator_profile = str(payload.get("generator_profile") or mode_defaults["generator_profile"]).strip().lower()
     if generator_profile not in ALLOWED_GENERATOR_PROFILES:
         raise ValueError(f"generator_profile must be one of: {', '.join(sorted(ALLOWED_GENERATOR_PROFILES))}")
     image_strategy = str(payload.get("image_strategy") or "hybrid").strip().lower()
     if image_strategy not in ALLOWED_IMAGE_STRATEGIES:
         raise ValueError(f"image_strategy must be one of: {', '.join(sorted(ALLOWED_IMAGE_STRATEGIES))}")
-    source_expansion_mode = str(payload.get("source_expansion_mode") or "balanced").strip().lower()
+    source_expansion_mode = str(payload.get("source_expansion_mode") or mode_defaults["source_expansion_mode"]).strip().lower()
     if source_expansion_mode not in ALLOWED_SOURCE_EXPANSION_MODES:
         raise ValueError(
             f"source_expansion_mode must be one of: {', '.join(sorted(ALLOWED_SOURCE_EXPANSION_MODES))}"
         )
-    search_budget = payload.get("search_budget", 4)
+    search_budget = payload.get("search_budget", mode_defaults["search_budget"])
     try:
         search_budget = max(0, min(int(search_budget), 8))
     except Exception:
@@ -1399,6 +1440,7 @@ def normalize_request(payload: dict) -> dict:
         "design_family": normalize_design_family(design_family_input) if design_family_input else "",
         "enabled_skills": normalized_skills or list(DEFAULT_SKILLS),
         "extra_instructions": str(payload.get("extra_instructions", "")).strip(),
+        "run_mode": run_mode,
         "generator_profile": generator_profile,
         "image_strategy": image_strategy,
         "reuse_source_images": parse_bool(payload.get("reuse_source_images"), True),
@@ -1406,18 +1448,48 @@ def normalize_request(payload: dict) -> dict:
         "design_goal": str(payload.get("design_goal", "")).strip(),
         "prompt_append": str(payload.get("prompt_append", "")).strip(),
         "source_expansion_mode": source_expansion_mode,
-        "search_enrichment": parse_bool(payload.get("search_enrichment"), True),
+        "search_enrichment": parse_bool(payload.get("search_enrichment"), mode_defaults["search_enrichment"]),
         "search_budget": search_budget,
-        "content_critique": parse_bool(payload.get("content_critique"), parse_bool(DEFAULT_CONTENT_CRITIQUE, True)),
-        "content_autofix": parse_bool(payload.get("content_autofix"), parse_bool(DEFAULT_CONTENT_AUTOFIX, True)),
-        "seo_critique": parse_bool(payload.get("seo_critique"), parse_bool(DEFAULT_SEO_CRITIQUE, True)),
-        "seo_autofix": parse_bool(payload.get("seo_autofix"), parse_bool(DEFAULT_SEO_AUTOFIX, True)),
-        "impeccable_critique": parse_bool(payload.get("impeccable_critique"), parse_bool(DEFAULT_IMPECCABLE_CRITIQUE, True)),
-        "impeccable_autofix": parse_bool(payload.get("impeccable_autofix"), parse_bool(DEFAULT_IMPECCABLE_AUTOFIX, True)),
-        "lighthouse_critique": parse_bool(payload.get("lighthouse_critique"), parse_bool(DEFAULT_LIGHTHOUSE_CRITIQUE, True)),
-        "lighthouse_autofix": parse_bool(payload.get("lighthouse_autofix"), parse_bool(DEFAULT_LIGHTHOUSE_AUTOFIX, True)),
-        "axe_critique": parse_bool(payload.get("axe_critique"), parse_bool(DEFAULT_AXE_CRITIQUE, True)),
-        "axe_autofix": parse_bool(payload.get("axe_autofix"), parse_bool(DEFAULT_AXE_AUTOFIX, True)),
+        "content_critique": parse_bool(
+            payload.get("content_critique"),
+            mode_defaults["content_critique"] and parse_bool(DEFAULT_CONTENT_CRITIQUE, True),
+        ),
+        "content_autofix": parse_bool(
+            payload.get("content_autofix"),
+            mode_defaults["content_autofix"] and parse_bool(DEFAULT_CONTENT_AUTOFIX, True),
+        ),
+        "seo_critique": parse_bool(
+            payload.get("seo_critique"),
+            mode_defaults["seo_critique"] and parse_bool(DEFAULT_SEO_CRITIQUE, True),
+        ),
+        "seo_autofix": parse_bool(
+            payload.get("seo_autofix"),
+            mode_defaults["seo_autofix"] and parse_bool(DEFAULT_SEO_AUTOFIX, True),
+        ),
+        "impeccable_critique": parse_bool(
+            payload.get("impeccable_critique"),
+            mode_defaults["impeccable_critique"] and parse_bool(DEFAULT_IMPECCABLE_CRITIQUE, True),
+        ),
+        "impeccable_autofix": parse_bool(
+            payload.get("impeccable_autofix"),
+            mode_defaults["impeccable_autofix"] and parse_bool(DEFAULT_IMPECCABLE_AUTOFIX, True),
+        ),
+        "lighthouse_critique": parse_bool(
+            payload.get("lighthouse_critique"),
+            mode_defaults["lighthouse_critique"] and parse_bool(DEFAULT_LIGHTHOUSE_CRITIQUE, True),
+        ),
+        "lighthouse_autofix": parse_bool(
+            payload.get("lighthouse_autofix"),
+            mode_defaults["lighthouse_autofix"] and parse_bool(DEFAULT_LIGHTHOUSE_AUTOFIX, True),
+        ),
+        "axe_critique": parse_bool(
+            payload.get("axe_critique"),
+            mode_defaults["axe_critique"] and parse_bool(DEFAULT_AXE_CRITIQUE, True),
+        ),
+        "axe_autofix": parse_bool(
+            payload.get("axe_autofix"),
+            mode_defaults["axe_autofix"] and parse_bool(DEFAULT_AXE_AUTOFIX, True),
+        ),
     }
 
 
@@ -2250,12 +2322,18 @@ Working directives:
 """
 
     operator_controls = f"""Operator controls:
+- Run mode: {request['run_mode']}
 - Industry: {request['industry']}
 - Design family: {design_engine.get('family') or request.get('design_family') or 'auto'}
 - Generator profile: {request['generator_profile']}
 - Source expansion mode: {request['source_expansion_mode']}
 - Search enrichment: {request['search_enrichment']}
 - Search budget: {request['search_budget']}
+- Content audit: critique={request['content_critique']}, autofix={request['content_autofix']}
+- SEO audit: critique={request['seo_critique']}, autofix={request['seo_autofix']}
+- Lighthouse audit: critique={request['lighthouse_critique']}, autofix={request['lighthouse_autofix']}
+- Axe audit: critique={request['axe_critique']}, autofix={request['axe_autofix']}
+- Impeccable audit: critique={request['impeccable_critique']}, autofix={request['impeccable_autofix']}
 - Design goal: {request['design_goal'] or 'General premium redesign'}
 - Brand notes: {request['brand_notes'] or 'None'}
 - Additional instructions: {request['extra_instructions'] or 'None'}
@@ -3528,6 +3606,7 @@ class Handler(BaseHTTPRequestHandler):
                     "firecrawl_url": FIRECRAWL_URL,
                     "model_policy": "deny-openrouter",
                     "endpoints": ["/health", "/skills", "/jobs", "/qualify", "/qualification-runs/<id>"],
+                    "run_modes": sorted(ALLOWED_RUN_MODES),
                     "generator_profiles": sorted(ALLOWED_GENERATOR_PROFILES),
                     "design_families": sorted(ALLOWED_DESIGN_FAMILIES),
                     "image_strategies": sorted(ALLOWED_IMAGE_STRATEGIES),

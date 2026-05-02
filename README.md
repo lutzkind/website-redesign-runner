@@ -33,17 +33,18 @@ Git-backed runner for AI website redesign jobs.
   "website_url": "https://example.com",
   "client_slug": "example-client",
   "industry": "restaurant",
+  "run_mode": "prospect",
   "design_family": "editorial-luxury",
-  "generator_profile": "quality",
+  "generator_profile": "lean",
   "image_strategy": "hybrid",
   "reuse_source_images": true,
   "allow_external_images": true,
   "content_critique": true,
-  "content_autofix": true,
+  "content_autofix": false,
   "seo_critique": true,
-  "seo_autofix": true,
-  "impeccable_critique": true,
-  "impeccable_autofix": true,
+  "seo_autofix": false,
+  "impeccable_critique": false,
+  "impeccable_autofix": false,
   "design_goal": "Luxury redesign that feels expensive and cinematic.",
   "brand_notes": "Premium editorial redesign with stronger reservation CTA.",
   "enabled_skills": [
@@ -64,6 +65,7 @@ Git-backed runner for AI website redesign jobs.
 
 The runner now exposes the main operator levers directly in the job payload:
 
+- `run_mode`: `prospect` or `refined`
 - `design_family`: optional override for the internal art-direction family
 - `generator_profile`: `lean`, `balanced`, or `quality`
 - `image_strategy`: `source-only`, `source-first`, `hybrid`, or `stock-first`
@@ -85,6 +87,13 @@ The runner now exposes the main operator levers directly in the job payload:
 - `design_goal`: short statement of the intended creative outcome
 - `prompt_append`: last-mile operator note appended into the prompt controls
 - the runner now hard-requires a real location module near the footer with address, hours, phone, and a map/directions link
+
+Default operating modes:
+
+- `prospect`: optimized for fast first drafts and lower token usage. Defaults to `generator_profile=lean`, `source_expansion_mode=strict`, `search_budget=2`, content and SEO audits on, all autofix passes off, and no Lighthouse/axe/Impeccable passes.
+- `refined`: optimized for retained customers or second-pass upgrades. Defaults to `generator_profile=balanced`, `source_expansion_mode=balanced`, `search_budget=4`, content and SEO autofix on, plus Lighthouse, axe, and Impeccable critiques enabled.
+
+The intent is to keep normal prospecting jobs under control and reserve the expensive audit/refinement stack for pages that are worth polishing further.
 
 For prompt inspection:
 
