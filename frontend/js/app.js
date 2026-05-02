@@ -332,7 +332,7 @@ async function renderLandingPage() {
     "Make trust feel instant.",
     "Keep your domain.",
     "Skip the technical mess.",
-    "Turn more visits into calls.",
+    "Turn search traffic into calls.",
   ];
   renderLayout(`
     <main>
@@ -341,7 +341,7 @@ async function renderLandingPage() {
           <div class="eyebrow">For busy small business owners</div>
           <h1 class="hero-title">${buildHeroRotator("landing-hero-rotator", rotatingLines)}</h1>
           <p class="lead">
-            We redesign your website so it feels clearer, more premium, and easier to trust.
+            We redesign your website so it feels clearer, more premium, easier to trust, and better structured for SEO.
             You keep your domain. We keep the switch simple.
           </p>
           <div class="actions actions-center">
@@ -387,9 +387,9 @@ async function renderLandingPage() {
             <p class="muted">Cleaner structure, clearer messaging, and a more premium feel.</p>
           </article>
           <article class="card scroll-reveal reveal-2">
-            <div class="eyebrow">How it works</div>
-            <h2 class="card-title">You review. We guide.</h2>
-            <p class="muted">See the redesign first. Ask for changes in plain language if you want more.</p>
+            <div class="eyebrow">SEO value</div>
+            <h2 class="card-title">Built to be found</h2>
+            <p class="muted">Cleaner structure, clearer page hierarchy, and content that is easier for search engines to understand.</p>
           </article>
           <article class="card scroll-reveal reveal-3">
             <div class="eyebrow">Core value</div>
@@ -427,7 +427,7 @@ async function renderLandingPage() {
       <section class="page section scroll-reveal reveal-2" id="pricing-section">
         <div class="eyebrow">Pricing</div>
         <h2 class="section-title">Simple pricing after the free preview.</h2>
-        <p class="lead">Start with hosting at $19 per month. Add more redesign rounds with credits. Or buy the files once.</p>
+        <p class="lead">Start with hosting at $19 per month for the simplest switch. Add more redesign rounds with credits. Or buy the files once.</p>
         ${pricingCardMarkup(pricing)}
       </section>
     </main>
@@ -680,7 +680,7 @@ async function renderOfferPage(token) {
     "Open it in private.",
     "Keep your domain.",
     "Skip the technical handoff.",
-    "Go live for $19 a month.",
+    "Go live with a stronger SEO foundation.",
   ];
   renderLayout(
     `
@@ -773,14 +773,14 @@ async function renderOfferPage(token) {
               <p class="muted">A calmer structure, clearer copy, and a stronger first impression.</p>
             </article>
             <article class="card scroll-reveal reveal-2">
+              <div class="eyebrow">SEO</div>
+              <h2 class="card-title">A cleaner SEO foundation</h2>
+              <p class="muted">Better structure, clearer hierarchy, and copy that is easier for both visitors and search engines to follow.</p>
+            </article>
+            <article class="card scroll-reveal reveal-3">
               <div class="eyebrow">Switching</div>
               <h2 class="card-title">No technical confusion</h2>
               <p class="muted">You keep your domain and get clear setup guidance instead of a technical checklist.</p>
-            </article>
-            <article class="card scroll-reveal reveal-3">
-              <div class="eyebrow">Flexibility</div>
-              <h2 class="card-title">Continue only if it feels right</h2>
-              <p class="muted">Host it, refine it, or unlock the files. Start by reviewing it in private.</p>
             </article>
           </div>
         </section>
