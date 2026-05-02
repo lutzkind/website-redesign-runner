@@ -197,6 +197,48 @@ The family is no longer the only visual driver. Each family now expands into a M
 
 This gives the first draft more concrete UI structure than the earlier prose-only family descriptions.
 
+The runner now also uses a broader local-business niche matrix on top of the family layer. It can infer and adapt for subtypes such as:
+
+- `restaurant-diner`
+- `restaurant-cafe`
+- `restaurant-bakery`
+- `restaurant-pizzeria`
+- `restaurant-upscale`
+- `restaurant-bar`
+- `trades-plumber`
+- `trades-electrician`
+- `trades-hvac`
+- `trades-roofer`
+- `trades-landscaper`
+- `trades-pest-control`
+- `service-cleaning`
+- `service-auto-detailing`
+- `care-dentist`
+- `care-orthodontist`
+- `care-medspa`
+- `care-chiropractor`
+- `care-vet`
+- `trust-legal`
+- `trust-accounting`
+- `retail-florist`
+- `retail-boutique`
+- `retail-jewelry`
+- `retail-furniture`
+- `wellness-salon`
+- `wellness-fitness`
+
+This niche matrix affects:
+
+- family selection
+- schema type
+- conversion priorities
+- required sections
+- rewrite targets
+- component adaptations
+- section flow
+
+It is still not an exhaustive taxonomy for every possible local business, but it is materially more specific than the earlier broad buckets.
+
 Restaurant note:
 
 - diner / breakfast / family-owned signals now bias toward `warm-hospitality`

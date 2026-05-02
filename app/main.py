@@ -210,13 +210,587 @@ INDUSTRY_DEFAULT_FAMILIES = {
     "electrician": "craftsman-premium",
     "hvac": "craftsman-premium",
     "contractor": "craftsman-premium",
+    "roofer": "craftsman-premium",
+    "landscaper": "craftsman-premium",
+    "pest-control": "craftsman-premium",
+    "cleaning": "modern-approachable",
+    "auto-detailing": "modern-approachable",
     "dentist": "crisp-trust",
+    "orthodontist": "crisp-trust",
     "medical": "crisp-trust",
+    "medspa": "editorial-luxury",
+    "chiropractor": "crisp-trust",
+    "vet": "warm-hospitality",
     "legal": "crisp-trust",
+    "accounting": "crisp-trust",
     "consulting": "crisp-trust",
     "retail": "modern-approachable",
+    "florist": "modern-approachable",
+    "boutique": "editorial-luxury",
+    "jewelry": "editorial-luxury",
+    "furniture": "modern-approachable",
+    "fitness": "cinematic-bold",
     "wellness": "modern-approachable",
     "general": "modern-approachable",
+}
+
+INDUSTRY_ALIAS_MAP = {
+    "coffee-shop": "cafe",
+    "coffeehouse": "cafe",
+    "brunch": "cafe",
+    "wine-bar": "bar",
+    "pub": "bar",
+    "roofing": "roofer",
+    "roofing-company": "roofer",
+    "roofing-contractor": "roofer",
+    "landscape": "landscaper",
+    "landscaping": "landscaper",
+    "landscaping-company": "landscaper",
+    "exterminator": "pest-control",
+    "pest": "pest-control",
+    "pestcontrol": "pest-control",
+    "pest-control-company": "pest-control",
+    "house-cleaning": "cleaning",
+    "home-cleaning": "cleaning",
+    "cleaning-service": "cleaning",
+    "maid-service": "cleaning",
+    "car-detailing": "auto-detailing",
+    "automotive-detailing": "auto-detailing",
+    "detailing": "auto-detailing",
+    "med-spa": "medspa",
+    "medical-spa": "medspa",
+    "orthodontics": "orthodontist",
+    "orthodontic": "orthodontist",
+    "chiropractic": "chiropractor",
+    "veterinarian": "vet",
+    "veterinary": "vet",
+    "flower-shop": "florist",
+    "hair-salon": "salon",
+    "jeweler": "jewelry",
+    "jewellery": "jewelry",
+    "furniture-store": "furniture",
+    "interior-design": "furniture",
+    "gym": "fitness",
+    "personal-training": "fitness",
+    "law-firm": "legal",
+    "lawyer": "legal",
+    "bookkeeping": "accounting",
+    "cpa": "accounting",
+}
+
+NICHE_SUBTYPE_LIBRARY = {
+    "restaurant-diner": {
+        "industries": {"restaurant"},
+        "signal_terms": {"diner", "breakfast", "all day breakfast", "comfort food", "omelet", "omelette", "pancake"},
+        "family": "warm-hospitality",
+        "schema_type": "Restaurant",
+        "conversion_priority": ["call-now", "location-and-hours", "menu-confidence"],
+        "section_flow": [
+            "Warm hero with primary CTA",
+            "Trust/story introduction",
+            "Breakfast-lunch-dinner menu highlights",
+            "Signature comfort-food band",
+            "Photo-led atmosphere and visit close",
+        ],
+        "component_adaptations": [
+            "Favor honest appetite-led photography over moody luxury staging.",
+            "Keep menu highlights immediately scannable and daypart-driven.",
+            "Use friendlier, neighborhood-scale typography and warmer surfaces.",
+            "Prefer proof strips, service warmth, and visit confidence over aspirational brand theater.",
+        ],
+        "required_sections": [
+            "hero",
+            "family story / trust strip",
+            "breakfast-lunch-dinner menu highlights",
+            "signature dishes or comfort-food feature band",
+            "photo-led atmosphere / gallery",
+            "visit info with hours, phone, address, and map",
+        ],
+        "rewrite_targets": ["menu highlights", "about copy", "visit/location copy"],
+        "section_notes": [
+            "Reframe the business as a beloved, reliable local diner rather than a generic restaurant.",
+            "Preserve diner warmth and familiarity while making the menu presentation more polished and persuasive.",
+            "Prefer rewritten section copy with stronger appetite appeal over literal source reuse.",
+        ],
+    },
+    "restaurant-cafe": {
+        "industries": {"restaurant", "cafe"},
+        "signal_terms": {"cafe", "coffee", "espresso", "latte", "brunch"},
+        "family": "warm-hospitality",
+        "schema_type": "CafeOrCoffeeShop",
+        "conversion_priority": ["visit-now", "menu-confidence", "hours-and-location"],
+        "section_flow": [
+            "Friendly hero with coffee or brunch emphasis",
+            "Signature drinks or baked goods strip",
+            "Menu highlights and ambience",
+            "Community/story module",
+            "Visit close with map and hours",
+        ],
+        "component_adaptations": [
+            "Use lighter pacing, brighter surfaces, and more approachable editorial copy than a full-service restaurant.",
+            "Make the hero and gallery feel morning-light and social rather than cinematic.",
+        ],
+        "required_sections": [
+            "hero",
+            "signature drinks / baked goods highlights",
+            "menu highlights",
+            "story or community block",
+            "visit info with hours, phone, address, and map",
+        ],
+        "rewrite_targets": ["menu highlights", "brand voice", "visit/location copy"],
+        "section_notes": [
+            "Make the business feel like a habitual local favorite rather than a special-occasion restaurant.",
+        ],
+    },
+    "restaurant-bakery": {
+        "industries": {"restaurant", "bakery"},
+        "signal_terms": {"bakery", "pastry", "cakes", "bread", "dessert"},
+        "family": "warm-hospitality",
+        "schema_type": "Bakery",
+        "conversion_priority": ["visit-now", "product-confidence", "location-and-hours"],
+        "section_flow": [
+            "Product-led hero",
+            "Bestsellers or seasonal spotlight",
+            "Freshness / craft story",
+            "Gift or pre-order CTA",
+            "Visit close with map and hours",
+        ],
+        "component_adaptations": [
+            "Favor tactile close-up product framing and softer merchandising rhythms.",
+            "Make product cards and ordering cues clearer than a standard restaurant menu strip.",
+        ],
+        "required_sections": [
+            "hero",
+            "bestsellers / seasonal picks",
+            "craft story",
+            "ordering or gifting CTA",
+            "visit info with hours, phone, address, and map",
+        ],
+        "rewrite_targets": ["product highlights", "freshness story", "CTA copy"],
+    },
+    "restaurant-pizzeria": {
+        "industries": {"restaurant"},
+        "signal_terms": {"pizza", "pizzeria", "slice", "wood-fired", "wood fired"},
+        "family": "cinematic-bold",
+        "schema_type": "Restaurant",
+        "conversion_priority": ["order-now", "menu-confidence", "location-and-hours"],
+        "section_flow": [
+            "Bold appetite-led hero",
+            "Signature pies and menu categories",
+            "Craft/process block",
+            "Gallery or social proof strip",
+            "Order or visit close",
+        ],
+        "component_adaptations": [
+            "Push stronger appetite contrast and hotter, more energetic image treatment than a diner or cafe.",
+            "Make ordering and signature item hierarchy immediate.",
+        ],
+        "required_sections": [
+            "hero",
+            "signature pies / menu highlights",
+            "craft or ingredient story",
+            "photo-led appetite section",
+            "visit or order close with map and contact",
+        ],
+        "rewrite_targets": ["signature product copy", "CTA copy", "menu highlights"],
+    },
+    "restaurant-upscale": {
+        "industries": {"restaurant", "hotel", "bar"},
+        "signal_terms": {"fine dining", "chef", "tasting", "wine", "steak", "cocktail"},
+        "family": "editorial-luxury",
+        "schema_type": "Restaurant",
+        "conversion_priority": ["reservations", "atmosphere", "location-and-hours"],
+        "section_flow": [
+            "Atmospheric hero with reservation-first CTA",
+            "Positioning and concept band",
+            "Signature menu spotlight",
+            "Gallery or ambience story",
+            "Reservation/location close",
+        ],
+        "component_adaptations": [
+            "Push stronger editorial spacing and more restrained copy density.",
+            "Use fewer but larger hero and gallery moments.",
+        ],
+        "required_sections": [
+            "hero",
+            "positioning/story",
+            "signature menu spotlight",
+            "atmosphere gallery",
+            "reservation/location close",
+        ],
+        "rewrite_targets": ["reservation CTA", "chef or concept story"],
+    },
+    "restaurant-bar": {
+        "industries": {"bar", "restaurant"},
+        "signal_terms": {"bar", "pub", "taproom", "cocktails", "nightlife", "brewery"},
+        "family": "cinematic-bold",
+        "schema_type": "BarOrPub",
+        "conversion_priority": ["visit-tonight", "events-or-specials", "location-and-hours"],
+        "section_flow": [
+            "Night-out hero",
+            "Signature drinks or specials",
+            "Atmosphere / events strip",
+            "Proof or gallery block",
+            "Visit close",
+        ],
+        "component_adaptations": [
+            "Lean into nightlife contrast, event energy, and social-proof rhythm.",
+        ],
+        "required_sections": [
+            "hero",
+            "signature drinks / specials",
+            "events or vibe strip",
+            "gallery / proof",
+            "visit close with map and hours",
+        ],
+        "rewrite_targets": ["specials copy", "events copy", "CTA copy"],
+    },
+    "trades-plumber": {
+        "industries": {"plumber"},
+        "signal_terms": {"plumbing", "drain", "water heater", "pipe", "leak"},
+        "family": "craftsman-premium",
+        "schema_type": "Plumber",
+        "conversion_priority": ["call-now", "quote-request", "trust-and-coverage"],
+        "section_flow": [
+            "Urgent-value hero with phone CTA",
+            "Core services overview",
+            "Emergency / response / trust strip",
+            "Process or service-area block",
+            "Contact close with map",
+        ],
+        "component_adaptations": [
+            "Emphasize conversion bars, phone trust, and emergency-response clarity over decorative galleries.",
+        ],
+        "required_sections": [
+            "hero",
+            "services overview",
+            "emergency or trust strip",
+            "coverage area / process",
+            "contact close with map and phone",
+        ],
+        "rewrite_targets": ["service descriptions", "emergency CTA", "trust copy"],
+        "section_notes": [
+            "Make speed, trust, and competence clearer than general craftsmanship branding.",
+        ],
+    },
+    "trades-electrician": {
+        "industries": {"electrician"},
+        "signal_terms": {"electrical", "panel", "rewiring", "lighting", "generator"},
+        "family": "craftsman-premium",
+        "schema_type": "Electrician",
+        "conversion_priority": ["call-now", "quote-request", "safety-and-trust"],
+        "required_sections": [
+            "hero",
+            "service cards",
+            "safety / licensing proof strip",
+            "project or process block",
+            "contact close with map and service area",
+        ],
+        "rewrite_targets": ["service descriptions", "safety trust copy"],
+        "section_notes": [
+            "Push safety, professionalism, and clarity more than generic trade bravado.",
+        ],
+    },
+    "trades-hvac": {
+        "industries": {"hvac"},
+        "signal_terms": {"hvac", "heating", "cooling", "air conditioning", "furnace"},
+        "family": "craftsman-premium",
+        "schema_type": "HomeAndConstructionBusiness",
+        "conversion_priority": ["call-now", "seasonal-service", "trust-and-coverage"],
+        "required_sections": [
+            "hero",
+            "heating and cooling service modules",
+            "seasonal maintenance / emergency strip",
+            "coverage or financing block",
+            "contact close with map and phone",
+        ],
+        "rewrite_targets": ["service descriptions", "seasonal CTA", "trust copy"],
+    },
+    "trades-roofer": {
+        "industries": {"roofer"},
+        "signal_terms": {"roof", "roofing", "shingle", "storm damage", "gutter"},
+        "family": "craftsman-premium",
+        "schema_type": "HomeAndConstructionBusiness",
+        "conversion_priority": ["inspection-request", "storm-response", "trust-and-proof"],
+        "required_sections": [
+            "hero",
+            "roofing services overview",
+            "storm damage / inspection CTA strip",
+            "project gallery or before-after",
+            "coverage and contact close",
+        ],
+        "rewrite_targets": ["inspection CTA", "service descriptions", "storm-response copy"],
+        "section_notes": [
+            "Bias toward inspection and damage-response confidence instead of generic contractor language.",
+        ],
+    },
+    "trades-landscaper": {
+        "industries": {"landscaper"},
+        "signal_terms": {"landscape", "lawn", "hardscape", "outdoor living", "garden"},
+        "family": "modern-approachable",
+        "schema_type": "HomeAndConstructionBusiness",
+        "conversion_priority": ["quote-request", "project-appeal", "coverage-and-contact"],
+        "required_sections": [
+            "hero",
+            "service highlights",
+            "project gallery",
+            "process or seasonal services block",
+            "coverage and contact close",
+        ],
+        "rewrite_targets": ["service descriptions", "gallery captions", "CTA copy"],
+        "section_notes": [
+            "Make the site feel more design-forward and visual than utility-first trade categories.",
+        ],
+    },
+    "trades-pest-control": {
+        "industries": {"pest-control"},
+        "signal_terms": {"pest", "termite", "rodent", "exterminator", "mosquito"},
+        "family": "crisp-trust",
+        "schema_type": "HomeAndConstructionBusiness",
+        "conversion_priority": ["call-now", "inspection-request", "trust-and-clarity"],
+        "required_sections": [
+            "hero",
+            "problem / pest categories",
+            "treatment process",
+            "guarantee / proof strip",
+            "contact close with service area",
+        ],
+        "rewrite_targets": ["problem-solution copy", "guarantee copy", "CTA copy"],
+    },
+    "service-cleaning": {
+        "industries": {"cleaning"},
+        "signal_terms": {"cleaning", "maid", "housekeeping", "deep clean", "janitorial"},
+        "family": "modern-approachable",
+        "schema_type": "HomeAndConstructionBusiness",
+        "conversion_priority": ["quote-request", "trust-and-reliability", "service-clarity"],
+        "required_sections": [
+            "hero",
+            "service packages or service types",
+            "process / checklist block",
+            "trust / reliability proof",
+            "contact close",
+        ],
+        "rewrite_targets": ["service descriptions", "process copy", "CTA copy"],
+    },
+    "service-auto-detailing": {
+        "industries": {"auto-detailing"},
+        "signal_terms": {"detailing", "paint correction", "ceramic coating", "interior detail"},
+        "family": "cinematic-bold",
+        "schema_type": "AutoRepair",
+        "conversion_priority": ["booking", "visual-proof", "package-clarity"],
+        "required_sections": [
+            "hero",
+            "package highlights",
+            "before-after or gallery",
+            "process / coatings block",
+            "booking close",
+        ],
+        "rewrite_targets": ["package copy", "visual proof captions", "CTA copy"],
+    },
+    "care-dentist": {
+        "industries": {"dentist"},
+        "signal_terms": {"dental", "dentist", "cleaning", "teeth", "family dentistry"},
+        "family": "crisp-trust",
+        "schema_type": "Dentist",
+        "conversion_priority": ["appointment-booking", "trust-and-credentials", "service-clarity"],
+        "required_sections": [
+            "hero",
+            "services",
+            "trust / credentials",
+            "patient comfort or FAQ",
+            "appointment close with map",
+        ],
+        "rewrite_targets": ["service explanations", "comfort copy", "CTA copy"],
+    },
+    "care-orthodontist": {
+        "industries": {"orthodontist"},
+        "signal_terms": {"orthodont", "braces", "invisalign", "smile", "aligners"},
+        "family": "crisp-trust",
+        "schema_type": "Dentist",
+        "conversion_priority": ["consultation", "transformation-proof", "service-clarity"],
+        "required_sections": [
+            "hero",
+            "treatment options",
+            "before-after or transformation proof",
+            "comfort / financing / FAQ",
+            "consultation close",
+        ],
+        "rewrite_targets": ["treatment copy", "transformation copy", "CTA copy"],
+        "section_notes": [
+            "Push treatment-option clarity and reassurance more than general family dentistry language.",
+        ],
+    },
+    "care-medspa": {
+        "industries": {"medspa", "spa"},
+        "signal_terms": {"med spa", "injectables", "facial", "wellness", "aesthetic"},
+        "family": "editorial-luxury",
+        "schema_type": "HealthAndBeautyBusiness",
+        "conversion_priority": ["consultation", "treatment-appeal", "trust-and-credentials"],
+        "required_sections": [
+            "hero",
+            "signature treatments",
+            "provider / trust strip",
+            "results or atmosphere gallery",
+            "consultation close",
+        ],
+        "rewrite_targets": ["treatment copy", "consultation CTA", "trust copy"],
+        "section_notes": [
+            "Balance premium beauty positioning with credible clinical reassurance.",
+        ],
+    },
+    "care-chiropractor": {
+        "industries": {"chiropractor"},
+        "signal_terms": {"chiropractic", "back pain", "alignment", "wellness care"},
+        "family": "crisp-trust",
+        "schema_type": "MedicalBusiness",
+        "conversion_priority": ["consultation", "pain-relief-clarity", "trust-and-location"],
+        "required_sections": [
+            "hero",
+            "conditions or treatments",
+            "care approach / trust block",
+            "FAQ or first-visit expectations",
+            "appointment close",
+        ],
+        "rewrite_targets": ["condition/treatment copy", "first-visit copy", "CTA copy"],
+    },
+    "care-vet": {
+        "industries": {"vet"},
+        "signal_terms": {"vet", "veterinary", "pet care", "animal hospital"},
+        "family": "warm-hospitality",
+        "schema_type": "VeterinaryCare",
+        "conversion_priority": ["appointment", "trust-and-care", "service-clarity"],
+        "required_sections": [
+            "hero",
+            "care services overview",
+            "trust / pet comfort strip",
+            "team or facility block",
+            "appointment close with map",
+        ],
+        "rewrite_targets": ["service descriptions", "care philosophy", "CTA copy"],
+    },
+    "trust-legal": {
+        "industries": {"legal"},
+        "signal_terms": {"law", "attorney", "legal", "injury", "estate planning"},
+        "family": "crisp-trust",
+        "schema_type": "LegalService",
+        "conversion_priority": ["consultation", "authority", "case-fit-clarity"],
+        "required_sections": [
+            "hero",
+            "practice areas",
+            "authority / results / trust strip",
+            "FAQ or process",
+            "consultation close",
+        ],
+        "rewrite_targets": ["practice area copy", "authority copy", "CTA copy"],
+    },
+    "trust-accounting": {
+        "industries": {"accounting", "consulting"},
+        "signal_terms": {"accounting", "tax", "bookkeeping", "cpa", "advisory"},
+        "family": "crisp-trust",
+        "schema_type": "ProfessionalService",
+        "conversion_priority": ["consultation", "clarity-and-trust", "service-fit"],
+        "required_sections": [
+            "hero",
+            "services",
+            "proof / trust strip",
+            "process or FAQ",
+            "consultation close",
+        ],
+        "rewrite_targets": ["service explanations", "trust copy", "CTA copy"],
+    },
+    "retail-florist": {
+        "industries": {"florist"},
+        "signal_terms": {"florist", "flowers", "bouquet", "wedding flowers", "arrangements"},
+        "family": "modern-approachable",
+        "schema_type": "Florist",
+        "conversion_priority": ["order-or-inquire", "occasion-fit", "visit-or-delivery"],
+        "required_sections": [
+            "hero",
+            "occasion categories or featured arrangements",
+            "gallery / product highlights",
+            "story / local service block",
+            "order or visit close",
+        ],
+        "rewrite_targets": ["occasion copy", "product highlights", "CTA copy"],
+        "section_notes": [
+            "Make the site feel giftable and emotionally specific, not like generic retail inventory.",
+        ],
+    },
+    "retail-boutique": {
+        "industries": {"boutique", "retail"},
+        "signal_terms": {"boutique", "curated", "shop", "collection", "style"},
+        "family": "editorial-luxury",
+        "schema_type": "Store",
+        "conversion_priority": ["visit-or-shop", "curation-proof", "brand-distinctiveness"],
+        "required_sections": [
+            "hero",
+            "featured collections or categories",
+            "brand story / curation block",
+            "gallery or merchandising block",
+            "visit or shop close",
+        ],
+        "rewrite_targets": ["collection copy", "brand story", "CTA copy"],
+    },
+    "retail-jewelry": {
+        "industries": {"jewelry"},
+        "signal_terms": {"jewelry", "engagement", "rings", "gold", "diamonds"},
+        "family": "editorial-luxury",
+        "schema_type": "Store",
+        "conversion_priority": ["appointment", "collection-appeal", "trust-and-craft"],
+        "required_sections": [
+            "hero",
+            "signature collections",
+            "craftsmanship / trust block",
+            "gallery or featured pieces",
+            "appointment or visit close",
+        ],
+        "rewrite_targets": ["collection copy", "craft story", "CTA copy"],
+    },
+    "retail-furniture": {
+        "industries": {"furniture"},
+        "signal_terms": {"furniture", "interior", "sofa", "table", "design showroom"},
+        "family": "modern-approachable",
+        "schema_type": "Store",
+        "conversion_priority": ["visit-showroom", "collection-clarity", "design-trust"],
+        "required_sections": [
+            "hero",
+            "featured collections",
+            "room or lifestyle gallery",
+            "design service or showroom block",
+            "visit close",
+        ],
+        "rewrite_targets": ["collection copy", "showroom copy", "CTA copy"],
+    },
+    "wellness-salon": {
+        "industries": {"salon"},
+        "signal_terms": {"salon", "hair", "stylist", "color", "blowout"},
+        "family": "editorial-luxury",
+        "schema_type": "BeautySalon",
+        "conversion_priority": ["booking", "service-appeal", "proof-and-trust"],
+        "required_sections": [
+            "hero",
+            "signature services",
+            "stylist or brand story",
+            "results / gallery",
+            "booking close",
+        ],
+        "rewrite_targets": ["service copy", "brand story", "CTA copy"],
+    },
+    "wellness-fitness": {
+        "industries": {"fitness"},
+        "signal_terms": {"fitness", "gym", "training", "strength", "classes"},
+        "family": "cinematic-bold",
+        "schema_type": "SportsActivityLocation",
+        "conversion_priority": ["trial-signup", "offer-clarity", "social-proof"],
+        "required_sections": [
+            "hero",
+            "programs or classes",
+            "proof / community strip",
+            "facility or results gallery",
+            "trial close",
+        ],
+        "rewrite_targets": ["program copy", "offer copy", "CTA copy"],
+    },
 }
 
 ALLOWED_DESIGN_FAMILIES = set(DESIGN_FAMILY_LIBRARY)
@@ -449,12 +1023,20 @@ def normalize_design_family(value: str) -> str:
     return normalized
 
 
+def canonicalize_industry(value: str) -> str:
+    normalized = slugify(value)
+    return INDUSTRY_ALIAS_MAP.get(normalized, normalized)
+
+
 def summarize_value_list(items: list[str], fallback: str = "None") -> str:
     filtered = [item for item in items if item]
     return ", ".join(filtered) if filtered else fallback
 
 
-def default_section_flow(industry: str, family_key: str) -> list[str]:
+def default_section_flow(industry: str, family_key: str, subtype: str = "") -> list[str]:
+    niche = NICHE_SUBTYPE_LIBRARY.get(subtype or "")
+    if niche and niche.get("section_flow"):
+        return list(niche["section_flow"])
     if industry == "restaurant":
         if family_key == "editorial-luxury":
             return [
@@ -506,6 +1088,13 @@ def infer_conversion_priority(industry: str) -> list[str]:
     return ["primary-cta", "trust", "clarity"]
 
 
+def infer_conversion_priority_for_subtype(industry: str, subtype: str) -> list[str]:
+    niche = NICHE_SUBTYPE_LIBRARY.get(subtype)
+    if niche and niche.get("conversion_priority"):
+        return list(niche["conversion_priority"])
+    return infer_conversion_priority(industry)
+
+
 def infer_business_subtype(request: dict, business_profile: dict, source_summary: dict) -> str:
     industry = request["industry"]
     text = " ".join(
@@ -516,17 +1105,19 @@ def infer_business_subtype(request: dict, business_profile: dict, source_summary
             " ".join(business_profile.get("core_highlights", [])),
         ]
     ).lower()
+    for subtype, config in NICHE_SUBTYPE_LIBRARY.items():
+        if industry not in config.get("industries", set()):
+            continue
+        if any(term in text for term in config.get("signal_terms", set())):
+            return subtype
+    for subtype, config in NICHE_SUBTYPE_LIBRARY.items():
+        if industry in config.get("industries", set()):
+            return subtype
     if industry == "restaurant":
-        if any(term in text for term in ("diner", "breakfast", "family-owned", "all day breakfast", "comfort food")):
-            return "restaurant-diner"
-        if any(term in text for term in ("cafe", "coffee", "bakery")):
-            return "restaurant-cafe"
-        if any(term in text for term in ("fine dining", "steak", "cocktail", "wine", "chef")):
-            return "restaurant-upscale"
         return "restaurant-general"
-    if industry in {"plumber", "electrician", "hvac", "contractor"}:
+    if industry in {"plumber", "electrician", "hvac", "contractor", "roofer", "landscaper", "pest-control"}:
         return "local-trades"
-    if industry in {"dentist", "medical", "legal", "consulting"}:
+    if industry in {"dentist", "medical", "legal", "consulting", "accounting", "orthodontist", "chiropractor"}:
         return "trust-service"
     return industry or "general"
 
@@ -535,28 +1126,8 @@ def build_component_blueprint(request: dict, design_engine: dict, business_profi
     family_key = design_engine.get("family", "modern-approachable")
     library = MAGICUI_COMPONENT_LIBRARY.get(family_key, MAGICUI_COMPONENT_LIBRARY["modern-approachable"])
     subtype = infer_business_subtype(request, business_profile, source_summary)
-
-    adaptations = []
-    if subtype == "restaurant-diner":
-        adaptations = [
-            "Favor honest appetite-led photography over moody luxury staging.",
-            "Keep menu highlights immediately scannable and daypart-driven.",
-            "Use friendlier, neighborhood-scale typography and warmer surfaces.",
-            "Prefer proof strips, service warmth, and visit confidence over aspirational brand theater.",
-        ]
-    elif subtype == "restaurant-upscale":
-        adaptations = [
-            "Push stronger editorial spacing and more restrained copy density.",
-            "Use fewer but larger hero and gallery moments.",
-        ]
-    elif subtype == "local-trades":
-        adaptations = [
-            "Emphasize conversion bars, trust badges, and service cards over decorative gallery patterns.",
-        ]
-    elif subtype == "trust-service":
-        adaptations = [
-            "Bias toward clarity, proof, and FAQ structure instead of high-drama image composition.",
-        ]
+    niche = NICHE_SUBTYPE_LIBRARY.get(subtype, {})
+    adaptations = list(niche.get("component_adaptations", []))
 
     return {
         "family": family_key,
@@ -598,7 +1169,9 @@ def select_design_family(request: dict, business_profile: dict, source_summary: 
         ]
     ).lower()
 
-    family = INDUSTRY_DEFAULT_FAMILIES.get(request["industry"], "modern-approachable")
+    subtype = infer_business_subtype(request, business_profile, source_summary)
+    niche = NICHE_SUBTYPE_LIBRARY.get(subtype, {})
+    family = niche.get("family") or INDUSTRY_DEFAULT_FAMILIES.get(request["industry"], "modern-approachable")
     rationale = [f"default for industry={request['industry']}"]
     diner_signals = (
         "diner",
@@ -612,7 +1185,9 @@ def select_design_family(request: dict, business_profile: dict, source_summary: 
         "comfort food",
     )
 
-    if request["industry"] == "restaurant" and any(term in text for term in diner_signals):
+    if niche.get("family"):
+        rationale.append(f"niche subtype {subtype} maps best to {family}")
+    elif request["industry"] == "restaurant" and any(term in text for term in diner_signals):
         family = "warm-hospitality"
         rationale.append("diner-style restaurant benefits more from warm neighborhood hospitality than luxury editorial cues")
     elif any(term in text for term in ("luxury", "premium", "editorial", "fine dining", "steak", "cocktail", "hotel")):
@@ -642,8 +1217,9 @@ def select_design_family(request: dict, business_profile: dict, source_summary: 
 def build_concept_blueprint(request: dict, business_profile: dict, source_summary: dict, design_engine: dict, source_assets: list[dict]) -> dict:
     family_key = design_engine["family"]
     profile = design_engine["profile"]
-    section_flow = default_section_flow(request["industry"], family_key)
-    conversion_priority = infer_conversion_priority(request["industry"])
+    subtype = infer_business_subtype(request, business_profile, source_summary)
+    section_flow = default_section_flow(request["industry"], family_key, subtype)
+    conversion_priority = infer_conversion_priority_for_subtype(request["industry"], subtype)
     source_title = source_summary.get("title", "").split("-")[0].strip()
     business_name = business_profile.get("business_name") or source_title or request["hostname"]
     image_policy = (
@@ -700,15 +1276,23 @@ def infer_schema_type(industry: str) -> str:
     return mapping.get(industry, "LocalBusiness")
 
 
+def infer_schema_type_for_subtype(industry: str, subtype: str) -> str:
+    niche = NICHE_SUBTYPE_LIBRARY.get(subtype)
+    if niche and niche.get("schema_type"):
+        return niche["schema_type"]
+    return infer_schema_type(industry)
+
+
 def build_seo_blueprint(request: dict, business_profile: dict, source_summary: dict, concept_blueprint: dict) -> dict:
     business_name = business_profile.get("business_name") or source_summary.get("title", "").split("-")[0].strip() or request["hostname"]
+    subtype = infer_business_subtype(request, business_profile, source_summary)
     location_hint = ""
     address = business_profile.get("address", "")
     if address:
         location_hint = address.split(",")[-1].strip() if "," in address else address
     headline_keywords = business_profile.get("core_highlights", [])[:4]
     return {
-        "schema_type": infer_schema_type(request["industry"]),
+        "schema_type": infer_schema_type_for_subtype(request["industry"], subtype),
         "canonical_url": request["website_url"],
         "title_formula": f"{business_name} | {request['industry'].replace('-', ' ').title()} in {location_hint or 'your area'}",
         "meta_description_focus": "Lead with the offer, atmosphere or trust angle, then reinforce location and a primary CTA in 120-160 characters.",
@@ -741,51 +1325,14 @@ def build_content_blueprint(request: dict, business_profile: dict, source_summar
     if business_profile.get("hours"):
         trust_signals.append("hours present")
     subtype = component_blueprint.get("business_subtype", "general")
+    niche = NICHE_SUBTYPE_LIBRARY.get(subtype, {})
     required_sections = ["hero", "proof", "contact-footer"]
     rewrite_targets = ["hero copy", "value proposition", "CTA copy"]
-    section_notes = []
-    if subtype == "restaurant-diner":
-        required_sections = [
-            "hero",
-            "family story / trust strip",
-            "breakfast-lunch-dinner menu highlights",
-            "signature dishes or comfort-food feature band",
-            "photo-led atmosphere / gallery",
-            "visit info with hours, phone, address, and map",
-        ]
-        rewrite_targets.extend(["menu highlights", "about copy", "visit/location copy"])
-        section_notes = [
-            "Reframe the business as a beloved, reliable local diner rather than a generic restaurant.",
-            "Preserve diner warmth and familiarity while making the menu presentation more polished and persuasive.",
-            "Prefer rewritten section copy with stronger appetite appeal over literal source reuse.",
-        ]
-    elif subtype == "restaurant-upscale":
-        required_sections = [
-            "hero",
-            "positioning/story",
-            "signature menu spotlight",
-            "atmosphere gallery",
-            "reservation/location close",
-        ]
-        rewrite_targets.extend(["reservation CTA", "chef or concept story"])
-    elif subtype == "local-trades":
-        required_sections = [
-            "hero",
-            "services overview",
-            "proof strip",
-            "process / before-after",
-            "coverage area and contact close",
-        ]
-        rewrite_targets.extend(["service descriptions", "trust copy"])
-    elif subtype == "trust-service":
-        required_sections = [
-            "hero",
-            "services",
-            "proof / credentials",
-            "FAQ",
-            "contact / consultation close",
-        ]
-        rewrite_targets.extend(["service explanations", "FAQ answers"])
+    section_notes = list(niche.get("section_notes", []))
+    if niche.get("required_sections"):
+        required_sections = list(niche["required_sections"])
+    if niche.get("rewrite_targets"):
+        rewrite_targets.extend(niche["rewrite_targets"])
     return {
         "business_subtype": subtype,
         "rewrite_rule": "Rewrite and improve source copy into sharper, clearer, more persuasive language. Preserve facts, but do not reuse long sentences verbatim.",
@@ -796,7 +1343,7 @@ def build_content_blueprint(request: dict, business_profile: dict, source_summar
         "review_evidence_present": bool(business_profile.get("review_snippets")),
         "forbidden_urls": [url for url in [business_profile.get("menu_url"), request["website_url"]] if url],
         "required_sections": required_sections,
-        "rewrite_targets": rewrite_targets,
+        "rewrite_targets": list(dict.fromkeys(rewrite_targets)),
         "section_notes": section_notes,
     }
 
@@ -821,7 +1368,7 @@ def normalize_request(payload: dict) -> dict:
         raise ValueError("enabled_skills must be an array or comma-delimited string")
 
     client_slug = payload.get("client_slug") or parsed.netloc
-    industry = slugify(str(payload.get("industry") or DEFAULT_INDUSTRY))
+    industry = canonicalize_industry(str(payload.get("industry") or DEFAULT_INDUSTRY))
     design_family_input = str(payload.get("design_family") or payload.get("template_family") or "").strip()
     generator_profile = str(payload.get("generator_profile") or "balanced").strip().lower()
     if generator_profile not in ALLOWED_GENERATOR_PROFILES:
