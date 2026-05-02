@@ -5,7 +5,7 @@ WORKDIR /app
 # Minimal runtime dependencies plus screenshot capture support
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    wkhtmltopdf \
+    chromium \
     fonts-dejavu-core \
   && rm -rf /var/lib/apt/lists/* \
   && pip install --no-cache-dir requests

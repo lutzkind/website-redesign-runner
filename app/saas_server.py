@@ -460,17 +460,18 @@ def capture_preview_screenshot(site_id: int, preview_url: str):
         return
     output_path = SCREENSHOTS_DIR / f"site-{site_id}.png"
     try:
-        if shutil.which("wkhtmltoimage"):
+        if shutil.which("chromium"):
             subprocess.run(
                 [
-                    "wkhtmltoimage",
-                    "--width",
-                    "1440",
-                    "--quality",
-                    "92",
-                    "--disable-smart-width",
+                    "chromium",
+                    "--headless",
+                    "--no-sandbox",
+                    "--disable-gpu",
+                    "--hide-scrollbars",
+                    "--window-size=1440,1600",
+                    "--virtual-time-budget=5000",
+                    f"--screenshot={output_path}",
                     preview_url,
-                    str(output_path),
                 ],
                 check=True,
                 capture_output=True,
@@ -502,7 +503,7 @@ def queue_preview_capture(site: dict):
         return
     if site.get("preview_image_url") and site.get("preview_image_captured_at"):
         return
-    if not shutil.which("wkhtmltoimage") and not (
+    if not shutil.which("chromium") and not (
         shutil.which("node") and (BASE_DIR / "app" / "capture_screenshot.mjs").exists()
     ):
         return
