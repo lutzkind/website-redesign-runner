@@ -126,6 +126,7 @@ Response highlights:
 - `assessment.redesign_opportunity_score`: higher means better redesign outreach target
 - `assessment.weak_signals`: why the site looks weak
 - `assessment.strong_signals`: why the site may already be good enough to skip
+- `visual_audit.visualDesignScore`: browser-based visual design heuristic score for the live source site
 
 Each qualification run is stored under `/data/qualification-runs/<id>/qualification.json` and exposed at `GET /qualification-runs/<id>`.
 

@@ -70,14 +70,17 @@ After import, do two setup steps in `n8n`:
 
 ## Current scoring logic
 
-The runner scores six buckets:
+The runner now scores seven buckets:
 
 - content depth
 - contact accessibility
 - conversion clarity
 - trust signals
 - visual assets
+- visual design
 - site structure
+
+`visual design` is evaluated with a browser-based audit of the live source site. It looks at headline scale, body text readability, CTA presence, button contrast, above-the-fold imagery, font consistency, and visible clutter rather than only the scraped HTML text.
 
 Interpretation:
 

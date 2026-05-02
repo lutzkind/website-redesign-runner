@@ -31,6 +31,7 @@ SEO_AUDIT_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_SEO_AUDIT_TIMEOUT", "12
 IMPECCABLE_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_IMPECCABLE_TIMEOUT", "180"))
 LIGHTHOUSE_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_LIGHTHOUSE_TIMEOUT", "180"))
 AXE_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_AXE_TIMEOUT", "180"))
+VISUAL_AUDIT_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_VISUAL_AUDIT_TIMEOUT", "120"))
 DEFAULT_CONTENT_CRITIQUE = os.environ.get("WEBSITE_REDESIGN_CONTENT_CRITIQUE", "true")
 DEFAULT_CONTENT_AUTOFIX = os.environ.get("WEBSITE_REDESIGN_CONTENT_AUTOFIX", "true")
 DEFAULT_SEO_CRITIQUE = os.environ.get("WEBSITE_REDESIGN_SEO_CRITIQUE", "true")
@@ -912,6 +913,44 @@ def score_contact_accessibility(business_profile: dict) -> tuple[float, list[str
     return score, strong, weak
 
 
+def audit_source_visual_design(job_dir: Path, request: dict) -> dict:
+    source_root = job_dir / "source"
+    source_root.mkdir(parents=True, exist_ok=True)
+    analysis_dir = source_root / "analysis"
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+
+    output_path = analysis_dir / "source-visual-audit.json"
+    screenshot_path = source_root / "source-homepage.png"
+    payload, log = run_node_json_script(
+        "run_source_visual_audit.mjs",
+        [request["website_url"], str(output_path), str(screenshot_path)],
+        cwd=job_dir,
+        timeout=VISUAL_AUDIT_TIMEOUT,
+    )
+
+    log_path = analysis_dir / "source-visual-audit.log"
+    log_path.write_text(
+        f"exit_code={log['exit_code']}\n\nSTDOUT:\n{log['stdout']}\n\nSTDERR:\n{log['stderr']}\n",
+        encoding="utf-8",
+    )
+
+    if not payload:
+        payload = {
+            "status": "error",
+            "visualDesignScore": None,
+            "strongSignals": [],
+            "weakSignals": [],
+            "metrics": {},
+            "error": "No source visual audit payload returned.",
+        }
+
+    payload["log"] = str(log_path)
+    payload["output_file"] = str(output_path)
+    payload["screenshot"] = str(screenshot_path) if screenshot_path.exists() else ""
+    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return payload
+
+
 def assess_website_quality(request: dict, source_context: dict) -> dict:
     source = source_context.get("source", {}) if isinstance(source_context, dict) else {}
     source_summary = source.get("summary", {}) if isinstance(source, dict) else {}
@@ -919,6 +958,7 @@ def assess_website_quality(request: dict, source_context: dict) -> dict:
     asset_candidates = source.get("asset_candidates", []) if isinstance(source, dict) else []
     completeness = source.get("completeness", {}) if isinstance(source, dict) else {}
     top_links = source_summary.get("top_links", []) if isinstance(source_summary, dict) else []
+    visual_audit = source_context.get("visual_audit", {}) if isinstance(source_context, dict) else {}
 
     html = ""
     index_file = source.get("index_file") if isinstance(source, dict) else ""
@@ -1000,6 +1040,15 @@ def assess_website_quality(request: dict, source_context: dict) -> dict:
         visual_score += 4
     visual_score = min(visual_score, 20)
 
+    visual_design_score = 0.0
+    raw_visual_score = visual_audit.get("visualDesignScore")
+    if isinstance(raw_visual_score, (int, float)):
+        visual_design_score = clamp_score((float(raw_visual_score) / 100.0) * 20.0, 0.0, 20.0)
+        strong_signals.extend(list(visual_audit.get("strongSignals", []))[:4])
+        weak_signals.extend(list(visual_audit.get("weakSignals", []))[:4])
+    else:
+        weak_signals.append("visual design audit was unavailable")
+
     structure_score = 0.0
     if structure.get("h1_count", 0) >= 1:
         structure_score += 4
@@ -1017,9 +1066,18 @@ def assess_website_quality(request: dict, source_context: dict) -> dict:
         structure_score += 4
     structure_score = min(structure_score, 20)
 
-    website_quality_score = clamp_score(
-        content_score + contact_score + conversion_score + trust_score + visual_score + structure_score
-    )
+    component_scores = {
+        "content_depth": round(content_score, 1),
+        "contact_accessibility": round(contact_score, 1),
+        "conversion_clarity": round(conversion_score, 1),
+        "trust_signals": round(trust_score, 1),
+        "visual_assets": round(visual_score, 1),
+        "visual_design": round(visual_design_score, 1),
+        "site_structure": round(structure_score, 1),
+    }
+    component_total = sum(component_scores.values())
+    component_max = 20.0 * len(component_scores)
+    website_quality_score = clamp_score((component_total / component_max) * 100.0 if component_max else 0.0)
     redesign_opportunity_score = clamp_score(100 - website_quality_score)
     completeness_score = float(completeness.get("score", 0.0) or 0.0)
     confidence = round(
@@ -1049,16 +1107,15 @@ def assess_website_quality(request: dict, source_context: dict) -> dict:
         "summary": summary,
         "strong_signals": strong_signals[:8],
         "weak_signals": weak_signals[:8],
-        "component_scores": {
-            "content_depth": round(content_score, 1),
-            "contact_accessibility": round(contact_score, 1),
-            "conversion_clarity": round(conversion_score, 1),
-            "trust_signals": round(trust_score, 1),
-            "visual_assets": round(visual_score, 1),
-            "site_structure": round(structure_score, 1),
-        },
+        "component_scores": component_scores,
         "structure_summary": structure,
         "completeness": completeness,
+        "visual_audit_summary": {
+            "visual_design_score": raw_visual_score,
+            "strong_signals": list(visual_audit.get("strongSignals", []))[:6],
+            "weak_signals": list(visual_audit.get("weakSignals", []))[:6],
+            "metrics": visual_audit.get("metrics", {}),
+        },
     }
 
 
@@ -2615,6 +2672,17 @@ def run_qualification(request: dict) -> dict:
     run_dir.mkdir(parents=True, exist_ok=True)
 
     source_context = analyze_site_context(run_dir, request)
+    try:
+        source_context["visual_audit"] = audit_source_visual_design(run_dir, request)
+    except Exception as exc:
+        source_context["visual_audit"] = {
+            "status": "error",
+            "visualDesignScore": None,
+            "strongSignals": [],
+            "weakSignals": [],
+            "metrics": {},
+            "error": str(exc),
+        }
     assessment = assess_website_quality(request, source_context)
     response = {
         "qualification_id": qualification_id,
@@ -2630,6 +2698,7 @@ def run_qualification(request: dict) -> dict:
         },
         "business_profile": source_context.get("business_profile", {}),
         "source_summary": source_context.get("source", {}).get("summary", {}),
+        "visual_audit": source_context.get("visual_audit", {}),
         "assessment": assessment,
         "artifacts": {
             "run_dir": str(run_dir),
@@ -2638,6 +2707,8 @@ def run_qualification(request: dict) -> dict:
             "business_profile": str(run_dir / "source" / "analysis" / "business-profile.json"),
             "design_engine": str(run_dir / "source" / "analysis" / "design-engine.json"),
             "concept_blueprint": str(run_dir / "source" / "analysis" / "concept-blueprint.json"),
+            "visual_audit": str(run_dir / "source" / "analysis" / "source-visual-audit.json"),
+            "source_screenshot": str(run_dir / "source" / "source-homepage.png"),
         },
     }
     write_json(run_dir / "qualification.json", response)
