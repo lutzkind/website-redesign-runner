@@ -9,6 +9,7 @@ const state = {
   pollTimer: null,
   pollJobId: null,
   heroTimer: null,
+  heroResizeCleanup: null,
   revealObserver: null,
   checkoutFlash: null,
 };
@@ -61,6 +62,10 @@ function stopPolling() {
   if (state.heroTimer) {
     clearInterval(state.heroTimer);
     state.heroTimer = null;
+  }
+  if (state.heroResizeCleanup) {
+    state.heroResizeCleanup();
+    state.heroResizeCleanup = null;
   }
   if (state.revealObserver) {
     state.revealObserver.disconnect();
@@ -144,9 +149,46 @@ function buildHeroRotator(id, lines, prefix = "") {
   return `${before}<span class="hero-rotator-shell"><span id="${id}" class="hero-rotator">${initial}</span></span>`;
 }
 
+function lockHeroRotatorHeight(el, lines) {
+  const shell = el?.parentElement;
+  if (!el || !shell || !Array.isArray(lines) || !lines.length) return;
+  const original = el.textContent;
+  let maxHeight = 0;
+
+  for (const line of lines) {
+    const probe = el.cloneNode();
+    probe.textContent = line;
+    probe.style.position = "relative";
+    probe.style.inset = "auto";
+    probe.style.visibility = "hidden";
+    probe.style.opacity = "0";
+    probe.style.pointerEvents = "none";
+    probe.style.transform = "none";
+    probe.style.filter = "none";
+    probe.style.display = "block";
+    probe.style.width = "100%";
+    shell.appendChild(probe);
+    maxHeight = Math.max(maxHeight, probe.getBoundingClientRect().height);
+    probe.remove();
+  }
+
+  el.textContent = original;
+  if (maxHeight > 0) shell.style.height = `${Math.ceil(maxHeight)}px`;
+}
+
 function startHeroRotator(id, lines) {
   const el = document.getElementById(id);
   if (!el || !Array.isArray(lines) || lines.length < 2) return;
+  if (state.heroResizeCleanup) {
+    state.heroResizeCleanup();
+    state.heroResizeCleanup = null;
+  }
+  const resize = () => lockHeroRotatorHeight(el, lines);
+  resize();
+  window.requestAnimationFrame(resize);
+  if (document.fonts?.ready) document.fonts.ready.then(resize).catch(() => {});
+  window.addEventListener("resize", resize, { passive: true });
+  state.heroResizeCleanup = () => window.removeEventListener("resize", resize);
   let index = 0;
   const rotate = () => {
     state.heroTimer = window.setTimeout(() => {
@@ -329,10 +371,10 @@ async function renderLandingPage() {
   const pricing = await loadPricing();
   const rotatingLines = [
     "Look premium at first glance.",
-    "Make trust feel instant.",
+    "Earn trust faster.",
     "Keep your domain.",
-    "Skip the technical mess.",
-    "Turn search traffic into calls.",
+    "Skip the technical setup.",
+    "Build on a cleaner SEO base.",
   ];
   renderLayout(`
     <main>
@@ -676,11 +718,11 @@ async function renderOfferPage(token) {
         </div>
       `;
   const rotatingLines = [
-    `${data.offer.company_name}, your redesign is ready.`,
-    "Open it in private.",
+    "Here is your redesign.",
+    "Review it in private.",
     "Keep your domain.",
     "Skip the technical handoff.",
-    "Go live with a stronger SEO foundation.",
+    "Launch on a cleaner SEO base.",
   ];
   renderLayout(
     `
