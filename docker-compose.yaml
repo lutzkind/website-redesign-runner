@@ -24,3 +24,18 @@ services:
       - /root/.local/bin/gws-email:/root/.local/bin/gws-email:ro
     ports:
       - "4321"
+  saas:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      SERVICE_URL_SAAS_4322: /
+      SAAS_HOST: 0.0.0.0
+      SAAS_PORT: 4322
+      SAAS_PUBLIC_URL: ${SAAS_PUBLIC_URL:-http://localhost:4322}
+      RUNNER_BASE_URL: http://runner:4321
+      WEBSITE_REDESIGN_ROOT: /data
+    volumes:
+      - ./saas-data:/data
+    ports:
+      - "4322"

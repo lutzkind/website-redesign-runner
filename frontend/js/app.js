@@ -282,9 +282,7 @@ async function maybeConfirmCheckout(offerToken = "") {
   if (checkout !== "success" || !sessionId) return;
   try {
     const result = await apiPost("/checkout/confirm", { session_id: sessionId, offer_token: offerToken });
-    const message = result.email_sent
-      ? "Payment confirmed. Your private sign-in link is on its way."
-      : "Payment confirmed. Use your private sign-in link to continue.";
+    const message = "Payment confirmed. Use your private sign-in link to continue.";
     setCheckoutFlash("success", message, result.login_url || "");
   } catch (error) {
     setCheckoutFlash("error", error.message || "We could not confirm that payment yet.");
@@ -880,7 +878,7 @@ async function submitLogin() {
   const result = await apiPost("/auth/login", { email, redirect_path: redirect });
   const status = document.getElementById("login-status");
   status.innerHTML = result.login_url
-    ? `<div class="status-banner status-warning">Email sending is disabled here. Use the dev link: <a href="${result.login_url}">${result.login_url}</a></div>`
+    ? `<div class="status-banner status-success">Use this private sign-in link: <a href="${result.login_url}">${result.login_url}</a></div>`
     : `<div class="status-banner status-success">${escapeHtml(result.message)}</div>`;
 }
 
@@ -911,7 +909,7 @@ async function submitFreeClaim() {
     });
     const box = document.getElementById("free-claim-status");
     box.innerHTML = result.login_url
-      ? `<div class="status-banner status-warning">Your redesign is generating. Since email sending is disabled here, use this private link: <a href="${result.login_url}">${result.login_url}</a></div>`
+      ? `<div class="status-banner status-success">Your redesign is generating. Use this private link to review it: <a href="${result.login_url}">${result.login_url}</a></div>`
       : `<div class="status-banner status-success">${escapeHtml(result.message)}</div>`;
     toast("Your free redesign request is in progress.");
   } catch (error) {

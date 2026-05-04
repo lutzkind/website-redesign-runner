@@ -9,7 +9,7 @@ Git-backed runner for AI website redesign jobs.
 - builds a prompt from adjustable markdown skills
 - runs `opencode run`
 - publishes static previews
-- sends success or failure emails
+- exposes private sign-in links that can be delivered by your own workflow
 
 ## Endpoints
 
@@ -22,6 +22,7 @@ Git-backed runner for AI website redesign jobs.
 - `GET /jobs/<job_id>/prompt-parts`
 - `GET /jobs/<job_id>/artifacts/<path>`
 - `GET /preview/<client-slug>/`
+- `GET|POST /api/automation/offer`
 
 ## Request shape
 
@@ -137,3 +138,42 @@ docker compose up --build
 ## Coolify
 
 This repo is intended to deploy in Coolify using the **Docker Compose** build pack so the app can keep source control while still mounting server-side auth/config for OpenCode and Gmail.
+
+For the SaaS frontend/API, mount a persistent host path to `/data`. That directory stores:
+
+- `saas.db`
+- generated exports
+- preview screenshots
+- rendered sites and job state
+
+Without a persistent `/data` mount, prospect links, sessions, screenshots, and checkout fulfillment state are lost on redeploy.
+
+## n8n handoff
+
+For ReachInbox or other automation, set `SAAS_AUTOMATION_API_TOKEN` and call:
+
+```bash
+curl -X POST "$SAAS_BASE/api/automation/offer" \
+  -H "Authorization: Bearer $SAAS_AUTOMATION_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"offer_token":"<offer-token>"}'
+```
+
+You can also resolve by lead identity:
+
+```json
+{
+  "email": "owner@example.com",
+  "website_url": "https://example.com"
+}
+```
+
+The response includes:
+
+- `offer`
+- `site`
+- `pricing`
+- `offer_url`
+- `login_url`
+
+`login_url` is freshly generated on each request, so your n8n workflow can send a current private sign-in link without the SaaS app sending email directly.

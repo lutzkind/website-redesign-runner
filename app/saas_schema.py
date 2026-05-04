@@ -665,6 +665,32 @@ def get_outreach_offer_by_site(site_id: int) -> dict | None:
     return _row_or_none(row)
 
 
+def get_outreach_offer_by_contact(contact_email: str, normalized_domain: str = "") -> dict | None:
+    conn = get_db()
+    if normalized_domain:
+        row = conn.execute(
+            """
+            SELECT * FROM outreach_offers
+            WHERE contact_email = ? AND normalized_domain = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (contact_email.strip().lower(), normalized_domain),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            """
+            SELECT * FROM outreach_offers
+            WHERE contact_email = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (contact_email.strip().lower(),),
+        ).fetchone()
+    conn.close()
+    return _row_or_none(row)
+
+
 def mark_outreach_offer_opened(token: str):
     conn = get_db()
     conn.execute(

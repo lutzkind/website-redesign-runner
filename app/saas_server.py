@@ -27,7 +27,6 @@ ROOT = Path(os.environ.get("WEBSITE_REDESIGN_ROOT", "/data"))
 PUBLIC_BASE_URL = os.environ.get("SAAS_PUBLIC_URL", "http://localhost:4322").rstrip("/")
 RUNNER_BASE_URL = os.environ.get("RUNNER_BASE_URL", "http://localhost:4321").rstrip("/")
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
-SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
 FROM_EMAIL = os.environ.get("SAAS_FROM_EMAIL", "noreply@webredesign.ai")
 CADDY_API_URL = os.environ.get("CADDY_API_URL", "http://caddy:2019")
 CREDIT_PACK_PRICE_ID = os.environ.get("STRIPE_CREDIT_PRICE_ID", "")
@@ -40,7 +39,7 @@ HOSTED_YEARLY_CENTS = int(os.environ.get("HOSTED_YEARLY_CENTS", str(int(HOSTED_M
 CREDIT_PACK_CENTS = int(os.environ.get("CREDIT_PACK_CENTS", "900"))
 CREDIT_PACK_SIZE = int(os.environ.get("CREDIT_PACK_SIZE", "5"))
 ONEOFF_CENTS = int(os.environ.get("ONEOFF_CENTS", "19900"))
-GWS_SEND_BIN = os.environ.get("GWS_SEND_BIN", "gws")
+AUTOMATION_API_TOKEN = os.environ.get("SAAS_AUTOMATION_API_TOKEN", "")
 
 SITES_DIR = ROOT / "sites"
 EXPORTS_DIR = ROOT / "exports"
@@ -155,54 +154,11 @@ def require_auth(handler):
     return db.get_user_by_session(auth[7:])
 
 
-def send_email(to: str, subject: str, body_html: str) -> bool:
-    if not SENDGRID_API_KEY:
-        try:
-            subprocess.run(
-                [
-                    GWS_SEND_BIN,
-                    "gmail",
-                    "+send",
-                    "--to",
-                    to,
-                    "--subject",
-                    subject,
-                    "--body",
-                    body_html,
-                    "--html",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            return True
-        except Exception as exc:
-            print(f"[email] gws fallback failed for {to}: {exc}", flush=True)
-            return False
-    payload = json.dumps(
-        {
-            "personalizations": [{"to": [{"email": to}]}],
-            "from": {"email": FROM_EMAIL},
-            "subject": subject,
-            "content": [{"type": "text/html", "value": body_html}],
-        }
-    ).encode()
-    req = urllib.request.Request(
-        "https://api.sendgrid.com/v3/mail/send",
-        data=payload,
-        headers={
-            "Authorization": f"Bearer {SENDGRID_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=20):
-            return True
-    except Exception as exc:
-        print(f"[email] error: {exc}", flush=True)
+def require_automation_auth(handler) -> bool:
+    if not AUTOMATION_API_TOKEN:
         return False
+    auth = handler.headers.get("Authorization", "")
+    return auth.startswith("Bearer ") and auth[7:] == AUTOMATION_API_TOKEN
 
 
 def dig_record(domain: str, record_type: str = "A") -> str | None:
@@ -586,14 +542,24 @@ def submit_runner_job(site: dict, prompt: str = "", industry: str = "general", d
 def issue_login_link(email: str, redirect_path: str, handler=None) -> tuple[bool, str]:
     token = db.create_login_token(email, redirect_path=redirect_path)
     login_url = f"{resolve_public_base(handler)}/login?token={token}"
-    body = f"""
-    <h2>Your redesigned site is ready to review</h2>
-    <p>Use the secure sign-in link below:</p>
-    <p><a href="{login_url}">{login_url}</a></p>
-    <p>This link expires in one hour.</p>
-    """
-    sent = send_email(email, "Your WebRedesign sign-in link", body)
-    return sent, login_url
+    return False, login_url
+
+
+def automation_offer_payload(offer: dict, handler=None) -> dict:
+    site = db.get_site(offer["site_id"])
+    site = update_site_from_job_state(site) if site else None
+    if site:
+        queue_preview_capture(site)
+    fresh_offer = sync_offer_from_site(db.get_outreach_offer_by_token(offer["token"]) or offer, site) or offer
+    payload = dict(fresh_offer)
+    payload["preview_url"] = site.get("preview_url") if site else preview_url_for_public(fresh_offer.get("preview_url", ""), handler)
+    return {
+        "offer": payload,
+        "site": site_payload(site) if site else None,
+        "pricing": price_catalog(),
+        "offer_url": f"{resolve_public_base(handler)}/offer/{fresh_offer['token']}",
+        "login_url": issue_login_link(fresh_offer["contact_email"], f"/offer/{fresh_offer['token']}", handler=handler)[1],
+    }
 
 
 def finalize_checkout_session(session_id: str, handler=None, expected_user_id: int = 0, expected_offer_token: str = "") -> dict:
@@ -906,6 +872,24 @@ class SaasHandler(BaseHTTPRequestHandler):
                 )
                 return
 
+            if path == "/api/automation/offer":
+                if not require_automation_auth(self):
+                    send_error(self, "Unauthorized", 401)
+                    return
+                offer_token = (params.get("offer_token", [""])[0] or "").strip()
+                email = (params.get("email", [""])[0] or "").strip().lower()
+                domain = (params.get("domain", [""])[0] or params.get("website_url", [""])[0] or "").strip()
+                offer = None
+                if offer_token:
+                    offer = db.get_outreach_offer_by_token(offer_token)
+                elif email:
+                    offer = db.get_outreach_offer_by_contact(email, db.normalize_domain(domain) if domain else "")
+                if not offer:
+                    send_error(self, "Offer not found", 404)
+                    return
+                send_json(self, automation_offer_payload(offer, self))
+                return
+
             send_error(self, "Not found", 404)
         except Exception as exc:
             traceback.print_exc()
@@ -927,14 +911,7 @@ class SaasHandler(BaseHTTPRequestHandler):
                     send_error(self, "Valid email required")
                     return
                 sent, login_url = issue_login_link(email, redirect_path)
-                send_json(
-                    self,
-                    {
-                        "sent": sent,
-                        "message": "Check your email for the sign-in link." if sent else "Email sending disabled; use the dev link.",
-                        "login_url": None if sent else login_url,
-                    },
-                )
+                send_json(self, {"sent": False, "message": "Use the private sign-in link below.", "login_url": login_url})
                 return
 
             if path == "/api/auth/logout":
@@ -983,8 +960,8 @@ class SaasHandler(BaseHTTPRequestHandler):
                         "claim": claim,
                         "site": site_payload(db.get_site(site["id"]), owner),
                         "job_id": result.get("job_id"),
-                        "login_url": None if sent else login_url,
-                        "message": "Your free redesign is in progress. Check your email for your private review link.",
+                        "login_url": login_url,
+                        "message": "Your free redesign is in progress. Use the private review link below.",
                     },
                     202,
                 )
@@ -1174,6 +1151,26 @@ class SaasHandler(BaseHTTPRequestHandler):
                     expected_offer_token=offer_token,
                 )
                 send_json(self, result)
+                return
+
+            if path == "/api/automation/offer":
+                if not require_automation_auth(self):
+                    send_error(self, "Unauthorized", 401)
+                    return
+                offer_token = body.get("offer_token", "").strip()
+                email = body.get("email", "").strip().lower()
+                domain = body.get("domain", "").strip() or body.get("website_url", "").strip()
+                if not offer_token and not email:
+                    send_error(self, "offer_token or email required")
+                    return
+                if offer_token:
+                    offer = db.get_outreach_offer_by_token(offer_token)
+                else:
+                    offer = db.get_outreach_offer_by_contact(email, db.normalize_domain(domain) if domain else "")
+                if not offer:
+                    send_error(self, "Offer not found", 404)
+                    return
+                send_json(self, automation_offer_payload(offer, self))
                 return
 
             if path == "/api/domains":
