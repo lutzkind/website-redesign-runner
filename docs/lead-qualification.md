@@ -70,17 +70,24 @@ After import, do two setup steps in `n8n`:
 
 ## Current scoring logic
 
-The runner now scores seven buckets:
+The runner now scores ten buckets:
 
 - content depth
 - contact accessibility
+- page coverage
 - conversion clarity
 - trust signals
 - visual assets
 - visual design
+- technical health
+- accessibility baseline
 - site structure
 
 `visual design` is evaluated with a browser-based audit of the live source site. It looks at headline scale, body text readability, CTA presence, button contrast, above-the-fold imagery, font consistency, and visible clutter rather than only the scraped HTML text.
+`technical health` is based on a live Lighthouse run against the source site.
+`accessibility baseline` is based on a live axe audit against the source site.
+
+If one of the live audits is unavailable in the current runtime, the evaluator excludes that bucket from score normalization instead of treating it as a failing score.
 
 Interpretation:
 

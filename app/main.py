@@ -1946,6 +1946,55 @@ def score_contact_accessibility(business_profile: dict) -> tuple[float, list[str
     return score, strong, weak
 
 
+def score_page_coverage(
+    request: dict,
+    business_profile: dict,
+    top_links: list[str],
+) -> tuple[float, dict, list[str], list[str]]:
+    link_blob = "\n".join(top_links or []).lower()
+    found: dict[str, bool] = {}
+
+    found["contact"] = any(term in link_blob for term in ("contact", "location", "directions", "visit-us"))
+    found["about"] = any(term in link_blob for term in ("about", "story", "team", "our-story", "about-us"))
+    if request.get("industry") in {"restaurant", "cafe", "bakery", "bar"}:
+        found["offer"] = bool(business_profile.get("menu_url")) or any(
+            term in link_blob for term in ("menu", "food", "drinks", "order")
+        )
+    else:
+        found["offer"] = any(
+            term in link_blob for term in ("service", "services", "pricing", "quote", "solutions", "work")
+        )
+    found["proof"] = any(
+        term in link_blob for term in ("review", "reviews", "testimonial", "testimonials", "gallery", "portfolio", "case-study")
+    )
+
+    strong: list[str] = []
+    weak: list[str] = []
+    score = 0.0
+    for name, present in found.items():
+        if present:
+            score += 5
+
+    if found["contact"]:
+        strong.append("the site exposes a dedicated contact/location path")
+    else:
+        weak.append("no obvious contact/location page was discovered")
+    if found["about"]:
+        strong.append("the site has an about/story page")
+    else:
+        weak.append("no obvious about/story page was discovered")
+    if found["offer"]:
+        strong.append("the site has a dedicated offer page (menu/services/pricing)")
+    else:
+        weak.append("no clear menu/services/pricing page was discovered")
+    if found["proof"]:
+        strong.append("the site has a proof-oriented page (reviews/gallery/portfolio)")
+    else:
+        weak.append("no obvious proof page was discovered")
+
+    return min(score, 20), found, strong, weak
+
+
 def audit_source_visual_design(job_dir: Path, request: dict) -> dict:
     source_root = job_dir / "source"
     source_root.mkdir(parents=True, exist_ok=True)
@@ -1984,6 +2033,73 @@ def audit_source_visual_design(job_dir: Path, request: dict) -> dict:
     return payload
 
 
+def audit_source_lighthouse(job_dir: Path, request: dict) -> dict:
+    source_root = job_dir / "source"
+    source_root.mkdir(parents=True, exist_ok=True)
+    analysis_dir = source_root / "analysis"
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+
+    output_path = analysis_dir / "source-lighthouse-audit.json"
+    payload, log = run_node_json_script(
+        "run_lighthouse_audit.mjs",
+        [request["website_url"], str(output_path)],
+        cwd=job_dir,
+        timeout=LIGHTHOUSE_TIMEOUT,
+    )
+
+    log_path = analysis_dir / "source-lighthouse-audit.log"
+    log_path.write_text(
+        f"exit_code={log['exit_code']}\n\nSTDOUT:\n{log['stdout']}\n\nSTDERR:\n{log['stderr']}\n",
+        encoding="utf-8",
+    )
+
+    if not payload:
+        payload = {
+            "status": "error",
+            "findingsCount": 0,
+            "findings": [],
+            "scores": {},
+            "error": "No source Lighthouse payload returned.",
+        }
+
+    payload["log"] = str(log_path)
+    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return payload
+
+
+def audit_source_axe(job_dir: Path, request: dict) -> dict:
+    source_root = job_dir / "source"
+    source_root.mkdir(parents=True, exist_ok=True)
+    analysis_dir = source_root / "analysis"
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+
+    output_path = analysis_dir / "source-axe-audit.json"
+    payload, log = run_node_json_script(
+        "run_axe_audit.mjs",
+        [request["website_url"], str(output_path)],
+        cwd=job_dir,
+        timeout=AXE_TIMEOUT,
+    )
+
+    log_path = analysis_dir / "source-axe-audit.log"
+    log_path.write_text(
+        f"exit_code={log['exit_code']}\n\nSTDOUT:\n{log['stdout']}\n\nSTDERR:\n{log['stderr']}\n",
+        encoding="utf-8",
+    )
+
+    if not payload:
+        payload = {
+            "status": "error",
+            "findingsCount": 0,
+            "findings": [],
+            "error": "No source axe payload returned.",
+        }
+
+    payload["log"] = str(log_path)
+    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return payload
+
+
 def assess_website_quality(request: dict, source_context: dict) -> dict:
     source = source_context.get("source", {}) if isinstance(source_context, dict) else {}
     source_summary = source.get("summary", {}) if isinstance(source, dict) else {}
@@ -1992,6 +2108,8 @@ def assess_website_quality(request: dict, source_context: dict) -> dict:
     completeness = source.get("completeness", {}) if isinstance(source, dict) else {}
     top_links = source_summary.get("top_links", []) if isinstance(source_summary, dict) else []
     visual_audit = source_context.get("visual_audit", {}) if isinstance(source_context, dict) else {}
+    source_lighthouse = source_context.get("source_lighthouse", {}) if isinstance(source_context, dict) else {}
+    source_axe = source_context.get("source_axe", {}) if isinstance(source_context, dict) else {}
 
     html = ""
     index_file = source.get("index_file") if isinstance(source, dict) else ""
@@ -2029,6 +2147,14 @@ def assess_website_quality(request: dict, source_context: dict) -> dict:
     contact_score, contact_strong, contact_weak = score_contact_accessibility(business_profile)
     strong_signals.extend(contact_strong)
     weak_signals.extend(contact_weak)
+
+    page_coverage_score, page_coverage, page_coverage_strong, page_coverage_weak = score_page_coverage(
+        request,
+        business_profile,
+        top_links,
+    )
+    strong_signals.extend(page_coverage_strong)
+    weak_signals.extend(page_coverage_weak)
 
     conversion_score = 0.0
     cta_hits = structure.get("cta_hits", [])
@@ -2073,7 +2199,7 @@ def assess_website_quality(request: dict, source_context: dict) -> dict:
         visual_score += 4
     visual_score = min(visual_score, 20)
 
-    visual_design_score = 0.0
+    visual_design_score = None
     raw_visual_score = visual_audit.get("visualDesignScore")
     if isinstance(raw_visual_score, (int, float)):
         visual_design_score = clamp_score((float(raw_visual_score) / 100.0) * 20.0, 0.0, 20.0)
@@ -2081,6 +2207,43 @@ def assess_website_quality(request: dict, source_context: dict) -> dict:
         weak_signals.extend(list(visual_audit.get("weakSignals", []))[:4])
     else:
         weak_signals.append("visual design audit was unavailable")
+
+    technical_health_score = None
+    lighthouse_scores = source_lighthouse.get("scores", {}) if isinstance(source_lighthouse, dict) else {}
+    score_values = [
+        float(lighthouse_scores.get("accessibility", 0) or 0),
+        float(lighthouse_scores.get("bestPractices", 0) or 0),
+        float(lighthouse_scores.get("seo", 0) or 0),
+        float(lighthouse_scores.get("performance", 0) or 0),
+    ]
+    if any(score_values):
+        weighted_average = (score_values[0] + score_values[1] + score_values[2] + (score_values[3] * 0.5)) / 3.5
+        technical_health_score = clamp_score((weighted_average / 100.0) * 20.0, 0.0, 20.0)
+        if weighted_average >= 85:
+            strong_signals.append("technical baseline looks healthy")
+        else:
+            weak_signals.append("technical baseline looks dated or under-optimized")
+        if lighthouse_scores.get("seo", 0) and float(lighthouse_scores.get("seo", 0)) < 70:
+            weak_signals.append("SEO fundamentals look weak")
+        if lighthouse_scores.get("bestPractices", 0) and float(lighthouse_scores.get("bestPractices", 0)) < 70:
+            weak_signals.append("browser best-practices score is weak")
+        if lighthouse_scores.get("accessibility", 0) and float(lighthouse_scores.get("accessibility", 0)) >= 88:
+            strong_signals.append("accessibility baseline looks solid")
+    else:
+        weak_signals.append("technical audit was unavailable")
+
+    accessibility_score = None
+    axe_findings = list(source_axe.get("findings", [])) if isinstance(source_axe, dict) else []
+    if source_axe.get("status") == "clean":
+        accessibility_score = 20.0
+        strong_signals.append("no major accessibility violations were detected")
+    elif axe_findings:
+        high_findings = sum(1 for item in axe_findings if item.get("severity") in {"critical", "serious", "high"})
+        total_findings = len(axe_findings)
+        accessibility_score = clamp_score(20 - (high_findings * 4) - ((total_findings - high_findings) * 1.5), 0.0, 20.0)
+        weak_signals.append("accessibility violations are visible on the live site")
+    else:
+        weak_signals.append("accessibility audit was unavailable")
 
     structure_score = 0.0
     if structure.get("h1_count", 0) >= 1:
@@ -2102,14 +2265,18 @@ def assess_website_quality(request: dict, source_context: dict) -> dict:
     component_scores = {
         "content_depth": round(content_score, 1),
         "contact_accessibility": round(contact_score, 1),
+        "page_coverage": round(page_coverage_score, 1),
         "conversion_clarity": round(conversion_score, 1),
         "trust_signals": round(trust_score, 1),
         "visual_assets": round(visual_score, 1),
-        "visual_design": round(visual_design_score, 1),
+        "visual_design": round(visual_design_score, 1) if isinstance(visual_design_score, (int, float)) else None,
+        "technical_health": round(technical_health_score, 1) if isinstance(technical_health_score, (int, float)) else None,
+        "accessibility_baseline": round(accessibility_score, 1) if isinstance(accessibility_score, (int, float)) else None,
         "site_structure": round(structure_score, 1),
     }
-    component_total = sum(component_scores.values())
-    component_max = 20.0 * len(component_scores)
+    available_component_scores = [value for value in component_scores.values() if isinstance(value, (int, float))]
+    component_total = sum(available_component_scores)
+    component_max = 20.0 * len(available_component_scores)
     website_quality_score = clamp_score((component_total / component_max) * 100.0 if component_max else 0.0)
     redesign_opportunity_score = clamp_score(100 - website_quality_score)
     completeness_score = float(completeness.get("score", 0.0) or 0.0)
@@ -2142,12 +2309,24 @@ def assess_website_quality(request: dict, source_context: dict) -> dict:
         "weak_signals": weak_signals[:8],
         "component_scores": component_scores,
         "structure_summary": structure,
+        "page_coverage": page_coverage,
         "completeness": completeness,
         "visual_audit_summary": {
             "visual_design_score": raw_visual_score,
             "strong_signals": list(visual_audit.get("strongSignals", []))[:6],
             "weak_signals": list(visual_audit.get("weakSignals", []))[:6],
             "metrics": visual_audit.get("metrics", {}),
+        },
+        "source_lighthouse_summary": {
+            "status": source_lighthouse.get("status"),
+            "scores": lighthouse_scores,
+            "findings_count": source_lighthouse.get("findingsCount", 0),
+            "top_findings": list(source_lighthouse.get("findings", []))[:5],
+        },
+        "source_axe_summary": {
+            "status": source_axe.get("status"),
+            "findings_count": len(axe_findings),
+            "top_findings": axe_findings[:5],
         },
     }
 
@@ -3762,6 +3941,25 @@ def run_qualification(request: dict) -> dict:
             "metrics": {},
             "error": str(exc),
         }
+    try:
+        source_context["source_lighthouse"] = audit_source_lighthouse(run_dir, request)
+    except Exception as exc:
+        source_context["source_lighthouse"] = {
+            "status": "error",
+            "findingsCount": 0,
+            "findings": [],
+            "scores": {},
+            "error": str(exc),
+        }
+    try:
+        source_context["source_axe"] = audit_source_axe(run_dir, request)
+    except Exception as exc:
+        source_context["source_axe"] = {
+            "status": "error",
+            "findingsCount": 0,
+            "findings": [],
+            "error": str(exc),
+        }
     assessment = assess_website_quality(request, source_context)
     response = {
         "qualification_id": qualification_id,
@@ -3778,6 +3976,8 @@ def run_qualification(request: dict) -> dict:
         "business_profile": source_context.get("business_profile", {}),
         "source_summary": source_context.get("source", {}).get("summary", {}),
         "visual_audit": source_context.get("visual_audit", {}),
+        "source_lighthouse": source_context.get("source_lighthouse", {}),
+        "source_axe": source_context.get("source_axe", {}),
         "assessment": assessment,
         "artifacts": {
             "run_dir": str(run_dir),
@@ -3788,6 +3988,8 @@ def run_qualification(request: dict) -> dict:
             "concept_blueprint": str(run_dir / "source" / "analysis" / "concept-blueprint.json"),
             "visual_audit": str(run_dir / "source" / "analysis" / "source-visual-audit.json"),
             "source_screenshot": str(run_dir / "source" / "source-homepage.png"),
+            "source_lighthouse": str(run_dir / "source" / "analysis" / "source-lighthouse-audit.json"),
+            "source_axe": str(run_dir / "source" / "analysis" / "source-axe-audit.json"),
         },
     }
     write_json(run_dir / "qualification.json", response)
