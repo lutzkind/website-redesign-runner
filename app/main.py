@@ -4365,6 +4365,7 @@ def render_ui_layout(title: str, body: str, extra_head: str = "", extra_scripts:
 def render_dashboard_html() -> str:
     states = list_job_states(250)
     summaries = [get_job_summary(state) for state in states]
+    empty_row = '<tr><td colspan="9" class="muted">No jobs yet.</td></tr>'
     stats = {
         "total": len(summaries),
         "running": sum(1 for item in summaries if item["status"] == "running"),
@@ -4463,7 +4464,7 @@ def render_dashboard_html() -> str:
             </tr>
           </thead>
           <tbody>
-            {''.join(rows) if rows else '<tr><td colspan=\"9\" class=\"muted\">No jobs yet.</td></tr>'}
+            {''.join(rows) if rows else empty_row}
           </tbody>
         </table>
       </div>
