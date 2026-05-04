@@ -10,6 +10,7 @@ import time
 import traceback
 import uuid
 from urllib.error import HTTPError, URLError
+from html import unescape
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -1778,14 +1779,20 @@ def summarize_firecrawl_payload(scrape: dict, mapped_links: list[str] | None = N
     metadata = data.get("metadata", {}) if isinstance(data, dict) else {}
     markdown = data.get("markdown", "") if isinstance(data, dict) else ""
     html = data.get("html", "") if isinstance(data, dict) else ""
+    base_url = metadata.get("url") or metadata.get("sourceURL", "")
+    html_links = extract_internal_links(html, base_url)
+    merged_links: list[str] = []
+    for candidate in list(mapped_links or []) + html_links:
+        if candidate and candidate not in merged_links:
+            merged_links.append(candidate)
     return {
         "title": metadata.get("title", ""),
         "description": metadata.get("description", ""),
         "language": metadata.get("language", ""),
-        "url": metadata.get("url") or metadata.get("sourceURL", ""),
+        "url": base_url,
         "markdown_excerpt": truncate_text(markdown, 2400),
         "html_excerpt": truncate_text(html, 1400),
-        "top_links": mapped_links or [],
+        "top_links": merged_links[:12],
     }
 
 
@@ -1796,6 +1803,127 @@ def summarize_search_item(item: dict) -> dict:
         "description": item.get("description", ""),
         "url": item.get("url", ""),
         "markdown_excerpt": truncate_text(markdown, 900),
+    }
+
+
+SOCIAL_PROFILE_HOSTS = {
+    "instagram.com",
+    "www.instagram.com",
+    "m.instagram.com",
+    "facebook.com",
+    "www.facebook.com",
+    "m.facebook.com",
+    "tiktok.com",
+    "www.tiktok.com",
+    "linktr.ee",
+    "www.linktr.ee",
+}
+
+
+def strip_html_tags(value: str) -> str:
+    text = re.sub(r"(?is)<(script|style)[^>]*>.*?</\\1>", " ", value or "")
+    text = re.sub(r"(?s)<[^>]+>", " ", text)
+    text = unescape(text)
+    return re.sub(r"\\s+", " ", text).strip()
+
+
+def parse_json_ld_blocks(html: str) -> list[dict]:
+    blocks: list[dict] = []
+    if not html:
+        return blocks
+    for match in re.finditer(
+        r"<script[^>]+type=[\"']application/ld\\+json[\"'][^>]*>(.*?)</script>",
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    ):
+        raw = (match.group(1) or "").strip()
+        if not raw:
+            continue
+        try:
+            payload = json.loads(unescape(raw))
+        except Exception:
+            continue
+        if isinstance(payload, list):
+            blocks.extend(item for item in payload if isinstance(item, dict))
+        elif isinstance(payload, dict):
+            blocks.append(payload)
+    return blocks
+
+
+def flatten_json_ld_items(items: list[dict]) -> list[dict]:
+    flattened: list[dict] = []
+    queue = list(items)
+    while queue:
+        item = queue.pop(0)
+        if not isinstance(item, dict):
+            continue
+        flattened.append(item)
+        graph = item.get("@graph")
+        if isinstance(graph, list):
+            queue.extend(node for node in graph if isinstance(node, dict))
+    return flattened
+
+
+def extract_internal_links(html: str, base_url: str, limit: int = 12) -> list[str]:
+    if not html or not base_url:
+        return []
+    parsed_base = urlparse(base_url)
+    base_host = parsed_base.netloc.lower()
+    links: list[str] = []
+    seen: set[str] = set()
+    for match in re.finditer(r"""href=["']([^"'#]+)["']""", html, flags=re.IGNORECASE):
+        href = (match.group(1) or "").strip()
+        if not href or href.startswith(("mailto:", "tel:", "javascript:")):
+            continue
+        full_url = urljoin(base_url, href)
+        parsed = urlparse(full_url)
+        if parsed.scheme not in {"http", "https"}:
+            continue
+        if parsed.netloc.lower() != base_host:
+            continue
+        normalized = parsed._replace(fragment="", query="").geturl().rstrip("/")
+        if normalized == base_url.rstrip("/"):
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        links.append(normalized)
+        if len(links) >= limit:
+            break
+    return links
+
+
+def detect_source_flags(request: dict, source_summary: dict, html: str) -> dict:
+    website_url = request.get("website_url", "")
+    parsed = urlparse(website_url)
+    host = parsed.netloc.lower()
+    lowered_html = (html or "").lower()
+    title = (source_summary.get("title", "") or "").strip().lower()
+    combined_text = " ".join(
+        bit for bit in [title, source_summary.get("description", ""), strip_html_tags(html)[:1200]] if bit
+    ).lower()
+    is_social_profile = host in SOCIAL_PROFILE_HOSTS
+    is_bot_challenge = (
+        "just a moment" in title
+        or "attention required" in title
+        or "cloudflare" in lowered_html
+        or "cf-chl" in lowered_html
+    )
+    is_ordering_microsite = any(
+        phrase in combined_text
+        for phrase in (
+            "menu & order online",
+            "order online",
+            "carryout",
+            "delivery",
+            "check availability",
+            "sign up for deals",
+        )
+    )
+    return {
+        "is_social_profile": is_social_profile,
+        "is_bot_challenge": is_bot_challenge,
+        "is_ordering_microsite": is_ordering_microsite,
     }
 
 
@@ -1918,6 +2046,13 @@ def clamp_score(value: float, lower: float = 0.0, upper: float = 100.0) -> float
     return max(lower, min(upper, value))
 
 
+def is_restaurant_like_industry(industry: str) -> bool:
+    normalized = canonicalize_industry(industry or "")
+    return normalized in {"restaurant", "cafe", "bakery", "bar"} or any(
+        token in normalized for token in ("restaurant", "cafe", "bakery", "bar", "pizza", "bistro", "diner")
+    )
+
+
 def score_contact_accessibility(business_profile: dict) -> tuple[float, list[str], list[str]]:
     score = 0.0
     strong: list[str] = []
@@ -1967,6 +2102,15 @@ def score_page_coverage(
     found["proof"] = any(
         term in link_blob for term in ("review", "reviews", "testimonial", "testimonials", "gallery", "portfolio", "case-study")
     )
+
+    restaurant_like = is_restaurant_like_industry(request.get("industry", ""))
+    if restaurant_like:
+        if not found["contact"] and (business_profile.get("phone") or business_profile.get("address") or business_profile.get("hours")):
+            found["contact"] = True
+        if not found["offer"] and business_profile.get("menu_url"):
+            found["offer"] = True
+        if not found["proof"] and business_profile.get("review_snippets"):
+            found["proof"] = True
 
     strong: list[str] = []
     weak: list[str] = []
@@ -2103,6 +2247,7 @@ def audit_source_axe(job_dir: Path, request: dict) -> dict:
 def assess_website_quality(request: dict, source_context: dict) -> dict:
     source = source_context.get("source", {}) if isinstance(source_context, dict) else {}
     source_summary = source.get("summary", {}) if isinstance(source, dict) else {}
+    source_flags = source.get("flags", {}) if isinstance(source, dict) else {}
     business_profile = source_context.get("business_profile", {}) if isinstance(source_context, dict) else {}
     asset_candidates = source.get("asset_candidates", []) if isinstance(source, dict) else []
     completeness = source.get("completeness", {}) if isinstance(source, dict) else {}
@@ -2295,6 +2440,28 @@ def assess_website_quality(request: dict, source_context: dict) -> dict:
         qualification_status = "target"
         summary = "The site looks weak enough to justify redesign outreach."
 
+    restaurant_like = is_restaurant_like_industry(request.get("industry", ""))
+    if source_flags.get("is_social_profile"):
+        qualification_status = "review"
+        summary = "The lead points to a social profile rather than a standalone website, so it should be handled in a separate outreach bucket."
+        weak_signals.insert(0, "the provided URL is a social profile, not a standalone website")
+    elif source_flags.get("fetch_failed"):
+        qualification_status = "review"
+        summary = "The site could not be reliably fetched during automated evaluation, so it should be reviewed manually before outreach."
+        weak_signals.insert(0, "the site could not be fetched reliably during evaluation")
+    elif source_flags.get("is_bot_challenge"):
+        qualification_status = "review"
+        summary = "The site blocked automated evaluation with a bot challenge, so it should be reviewed manually before outreach."
+        weak_signals.insert(0, "the site returned a bot-protection or challenge page during evaluation")
+    elif restaurant_like and qualification_status == "target":
+        has_good_restaurant_baseline = (
+            (content_score >= 16 and conversion_score >= 10 and (page_coverage_score >= 10 or contact_score >= 10 or trust_score >= 8))
+            or (page_coverage_score >= 10 and conversion_score >= 8 and (content_score >= 10 or contact_score >= 5))
+        )
+        if has_good_restaurant_baseline or source_flags.get("is_ordering_microsite"):
+            qualification_status = "review"
+            summary = "The site is operationally decent but still worth a manual review before redesign outreach."
+
     quality_tier = "strong" if website_quality_score >= 70 else ("mid" if website_quality_score >= 45 else "weak")
 
     return {
@@ -2311,6 +2478,7 @@ def assess_website_quality(request: dict, source_context: dict) -> dict:
         "structure_summary": structure,
         "page_coverage": page_coverage,
         "completeness": completeness,
+        "source_flags": source_flags,
         "visual_audit_summary": {
             "visual_design_score": raw_visual_score,
             "strong_signals": list(visual_audit.get("strongSignals", []))[:6],
@@ -2354,19 +2522,87 @@ def enrich_source_context(request: dict, source_summary: dict) -> dict:
     }
 
 
-def extract_business_profile(request: dict, source_summary: dict, enrichment: dict, source_assets: list[dict]) -> dict:
+def extract_business_profile(
+    request: dict,
+    source_summary: dict,
+    enrichment: dict,
+    source_assets: list[dict],
+    source_html: str = "",
+) -> dict:
     markdown = source_summary.get("markdown_excerpt", "") or ""
+    combined_text = "\n".join(bit for bit in [markdown, strip_html_tags(source_html)] if bit)
+    json_ld_items = flatten_json_ld_items(parse_json_ld_blocks(source_html))
 
     def match(pattern: str) -> str:
-        found = re.search(pattern, markdown, flags=re.IGNORECASE)
+        found = re.search(pattern, combined_text, flags=re.IGNORECASE)
         return found.group(1).strip() if found else ""
 
-    phone = match(r"(?:\+?1[-.\s]?)?\(?(\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})")
-    hours = match(r"Opening Hours\s*:\s*([^\n]+)")
-    address = match(r"(\d{1,6} [^\n,]+,\s*[^\n]+)")
+    def extract_phone() -> str:
+        tel_match = re.search(r"tel:([+0-9().\\-\\s]{7,})", source_html, flags=re.IGNORECASE)
+        if tel_match:
+            return tel_match.group(1).strip()
+        return match(r"(\\+?\\d[\\d().\\-\\s]{7,}\\d)")
+
+    def extract_address() -> str:
+        for item in json_ld_items:
+            address = item.get("address")
+            if isinstance(address, dict):
+                parts = [
+                    str(address.get("streetAddress", "")).strip(),
+                    str(address.get("addressLocality", "")).strip(),
+                    str(address.get("addressRegion", "")).strip(),
+                    str(address.get("postalCode", "")).strip(),
+                ]
+                cleaned = ", ".join(part for part in parts if part)
+                if cleaned:
+                    return cleaned
+        street_pattern = (
+            r"(\\d{1,6}\\s+[A-Za-z0-9 .'-]+(?:street|st|road|rd|avenue|ave|boulevard|blvd|lane|ln|drive|dr|highway|hwy|place|pl|court|ct)\\b(?:,\\s*[^\\n,]+){0,3})"
+        )
+        return match(street_pattern) or match(r"(\\d{1,6}\\s+[^\\n,]+(?:,\\s*[^\\n,]+){1,3})")
+
+    def extract_hours() -> str:
+        for item in json_ld_items:
+            opening_hours = item.get("openingHours")
+            if isinstance(opening_hours, list):
+                joined = "; ".join(str(bit).strip() for bit in opening_hours if str(bit).strip())
+                if joined:
+                    return joined
+            if isinstance(opening_hours, str) and opening_hours.strip():
+                return opening_hours.strip()
+            specs = item.get("openingHoursSpecification")
+            if isinstance(specs, list) and specs:
+                rendered: list[str] = []
+                for spec in specs[:7]:
+                    if not isinstance(spec, dict):
+                        continue
+                    day = spec.get("dayOfWeek")
+                    opens = spec.get("opens")
+                    closes = spec.get("closes")
+                    if day and opens and closes:
+                        rendered.append(f"{day}: {opens}-{closes}")
+                if rendered:
+                    return "; ".join(rendered)
+        return match(r"(?:Opening Hours|Hours)\\s*:?\\s*([^\\n]{6,120})")
+
+    def extract_menu_url() -> str:
+        for match in re.finditer(r"\[([^\]]+)\]\((https?://[^\)]+)\)", combined_text, flags=re.IGNORECASE):
+            label = (match.group(1) or "").lower()
+            href = (match.group(2) or "").strip()
+            if "menu" in label and href:
+                return urljoin(request["website_url"], href)
+        for match in re.finditer(r"""href=["']([^"']+)["']""", source_html, flags=re.IGNORECASE):
+            href = (match.group(1) or "").strip()
+            if any(token in href.lower() for token in ("menu", "order", "reservation", "book")):
+                return urljoin(request["website_url"], href)
+        return ""
+
+    phone = extract_phone()
+    hours = extract_hours()
+    address = extract_address()
     business_name = source_summary.get("title", "").split("-")[0].strip() or request["hostname"]
     maps_query_url = f"https://www.google.com/maps/search/?api=1&query={quote_plus(address)}" if address else ""
-    menu_url = match(r"\[VIEW BREAKFAST MENU\]\((https?://[^\)]+)\)") or match(r"\[[^\]]*MENU[^\]]*\]\((https?://[^\)]+)\)")
+    menu_url = extract_menu_url()
 
     highlights = []
     for phrase in (
@@ -2506,6 +2742,7 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
     source_root.mkdir(parents=True, exist_ok=True)
     analysis_dir = source_root / "analysis"
     analysis_dir.mkdir(parents=True, exist_ok=True)
+    html = ""
 
     result: dict = {
         "source": None,
@@ -2534,15 +2771,61 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
             "index_file": str(host_root / "index.html"),
             "summary": source_analysis["summary"],
             "asset_candidates": asset_candidates,
+            "flags": detect_source_flags(request, source_analysis["summary"], html),
         }
     except Exception as exc:
-        fallback = fetch_source_html(job_dir, request)
-        fallback["warning"] = f"Firecrawl source analysis unavailable: {exc}"
         try:
-            html = Path(fallback["index_file"]).read_text(encoding="utf-8")
-            fallback["asset_candidates"] = extract_asset_candidates(html, request["website_url"])
-        except Exception:
-            fallback["asset_candidates"] = []
+            fallback = fetch_source_html(job_dir, request)
+            fallback["warning"] = f"Firecrawl source analysis unavailable: {exc}"
+            try:
+                html = Path(fallback["index_file"]).read_text(encoding="utf-8")
+                fallback["asset_candidates"] = extract_asset_candidates(html, request["website_url"])
+                fallback["summary"] = {
+                    "title": match.group(1).strip() if (match := re.search(r"<title>(.*?)</title>", html, flags=re.IGNORECASE | re.DOTALL)) else "",
+                    "description": "",
+                    "language": "",
+                    "url": request["website_url"],
+                    "markdown_excerpt": truncate_text(strip_html_tags(html), 2400),
+                    "html_excerpt": truncate_text(html, 1400),
+                    "top_links": extract_internal_links(html, request["website_url"]),
+                }
+                fallback["flags"] = detect_source_flags(request, fallback["summary"], html)
+            except Exception:
+                fallback["asset_candidates"] = []
+                fallback["summary"] = {
+                    "title": "",
+                    "description": "",
+                    "language": "",
+                    "url": request["website_url"],
+                    "markdown_excerpt": "",
+                    "html_excerpt": "",
+                    "top_links": [],
+                }
+                fallback["flags"] = {}
+        except Exception as fetch_exc:
+            fallback = {
+                "method": "unavailable",
+                "warning": f"Firecrawl source analysis unavailable: {exc}",
+                "error": str(fetch_exc),
+                "source_root": str(source_root),
+                "index_file": "",
+                "asset_candidates": [],
+                "summary": {
+                    "title": "",
+                    "description": "",
+                    "language": "",
+                    "url": request["website_url"],
+                    "markdown_excerpt": "",
+                    "html_excerpt": "",
+                    "top_links": [],
+                },
+                "flags": {
+                    "is_social_profile": urlparse(request["website_url"]).netloc.lower() in SOCIAL_PROFILE_HOSTS,
+                    "is_bot_challenge": False,
+                    "is_ordering_microsite": False,
+                    "fetch_failed": True,
+                },
+            }
         result["source"] = fallback
 
     source_summary = result["source"].get("summary", {}) if isinstance(result["source"], dict) else {}
@@ -2565,6 +2848,7 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
         source_summary,
         result["enrichment"],
         source_assets,
+        html,
     )
     classification = detect_industry_from_source(
         request,
