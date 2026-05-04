@@ -130,6 +130,7 @@ Use `POST /qualify` as the scoring service behind an `n8n` lead workflow. `n8n` 
 2. loop over rows with a website
 3. call the runner's `/qualify` endpoint
 4. write `qualification_status`, scores, and reasons back to NocoDB
+5. optionally retry only `failed` evaluations after a cooldown window instead of reprocessing every non-target row
 5. forward only `target` rows into your outreach workflow
 
 An importable starter workflow is included at `workflows/scraper-leads-qualification.n8n.json`. It is prewired to the current NocoDB `Scraper Leads` table and expects the table's source URL column to be named `website`.
@@ -148,9 +149,10 @@ Example request:
 
 Response highlights:
 
-- `assessment.qualification_status`: `target`, `review`, `skip`, or `failed`
+- `assessment.qualification_status`: `target`, `review`, `skip`, `failed`, or `external_profile`
 - `failed` means the site could not be evaluated reliably, for example due to a bot challenge, captcha, or fetch failure
 - obvious corporate location pages and branded hotel-chain property pages are suppressed to `skip`
+- `external_profile` means the lead only points to a social/profile page rather than a standalone website
 - `assessment.website_quality_score`: higher means the current site is stronger
 - `assessment.redesign_opportunity_score`: higher means better redesign outreach target
 - `assessment.weak_signals`: why the site looks weak

@@ -2724,7 +2724,7 @@ def assess_website_quality(request: dict, source_context: dict) -> dict:
 
     restaurant_like = is_restaurant_like_industry(request.get("industry", ""))
     if source_flags.get("is_social_profile"):
-        qualification_status = "review"
+        qualification_status = "external_profile"
         summary = "The lead points to a social profile rather than a standalone website, so it should be handled in a separate outreach bucket."
         weak_signals.insert(0, "the provided URL is a social profile, not a standalone website")
     elif source_flags.get("is_chain_hotel_page"):

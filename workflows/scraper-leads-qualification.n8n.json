@@ -25,7 +25,8 @@
             "name",
             "category",
             "website",
-            "qualification_status"
+            "qualification_status",
+            "last_qualified_at"
           ]
         }
       },
@@ -42,7 +43,7 @@
       "parameters": {
         "language": "javaScript",
         "mode": "runOnceForEachItem",
-        "jsCode": "const website = String($json.website || '').trim();\nconst status = String($json.qualification_status || '').trim().toLowerCase();\n\nif (!website) {\n  return [];\n}\n\nif (status) {\n  return [];\n}\n\nif (!/^https?:\\/\\//i.test(website)) {\n  return [];\n}\n\nreturn [{ json: $json }];"
+        "jsCode": "const website = String($json.website || '').trim();\nconst status = String($json.qualification_status || '').trim().toLowerCase();\nconst lastQualifiedAt = String($json.last_qualified_at || '').trim();\n\nif (!website) {\n  return [];\n}\n\nif (!/^https?:\\/\\//i.test(website)) {\n  return [];\n}\n\nif (!status) {\n  return [{ json: $json }];\n}\n\nif (status === 'failed') {\n  const parsed = Date.parse(lastQualifiedAt);\n  const retryAfterMs = 24 * 60 * 60 * 1000;\n  if (!Number.isFinite(parsed) || (Date.now() - parsed) >= retryAfterMs) {\n    return [{ json: $json }];\n  }\n}\n\nreturn [];"
       },
       "id": "813374a3-ad02-4a6c-9884-c5d52442bb8d",
       "name": "Filter Unqualified Leads",

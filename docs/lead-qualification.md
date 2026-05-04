@@ -26,6 +26,7 @@ Add these fields to your leads table:
 1. Trigger
 2. NocoDB list records
 3. Filter rows where `website` exists and `qualification_status` is still empty
+   also allow `failed` rows to retry after the cooldown window
 4. Split In Batches
 5. HTTP Request to `POST /qualify`
 6. IF `assessment.qualification_status == "target"`
@@ -60,7 +61,7 @@ After import, do two setup steps in `n8n`:
 ## Response fields to persist
 
 - `assessment.qualification_status`
-  possible values: `target`, `review`, `skip`, `failed`
+  possible values: `target`, `review`, `skip`, `failed`, `external_profile`
 - `assessment.website_quality_score`
 - `assessment.redesign_opportunity_score`
 - `assessment.confidence`
@@ -96,6 +97,7 @@ Interpretation:
 - `review`: mixed signals, worth human review
 - `skip`: site already looks competent enough that redesign outreach is lower priority
 - `failed`: the site could not be evaluated reliably because it was inaccessible, blocked, or challenge-gated
+- `external_profile`: the lead points to a social/profile page rather than a standalone website
 
 Additional suppression rules:
 
@@ -105,5 +107,11 @@ Additional suppression rules:
 ## Practical first pass
 
 Start strict. Only outreach `target` rows. Keep `review` rows in the table for later manual inspection, ignore `skip`, and treat `failed` as an evaluator failure state for retry or separate investigation.
+
+Current workflow behavior:
+
+- fresh rows with empty `qualification_status` are processed immediately
+- `failed` rows can be retried after 24 hours
+- `external_profile`, `review`, `skip`, and `target` rows are left alone unless you clear the status manually
 
 That gives you a cleaner first outbound motion and avoids wasting volume on businesses whose websites already clear a decent baseline.
