@@ -15,6 +15,10 @@ Git-backed runner for AI website redesign jobs.
 ## Endpoints
 
 - `GET /health`
+- `GET /`
+- `GET /ui`
+- `GET /ui/jobs/<job_id>`
+- `POST /ui/jobs`
 - `GET /skills`
 - `GET /skills/<name>`
 - `POST /jobs`
@@ -25,6 +29,14 @@ Git-backed runner for AI website redesign jobs.
 - `POST /qualify`
 - `GET /qualification-runs/<qualification_id>`
 - `GET /preview/<client-slug>/`
+
+The internal WebUI now ships with the runner and is intended to be the default operator console. It provides:
+
+- a job dashboard with status, run mode, inferred niche, tokens, audit coverage, and preview links
+- a new-job form that only requires a website URL
+- per-job detail pages with embedded preview, prompt metrics, classification output, component/content/SEO blueprints, and audit payloads
+- one-click reruns as `prospect` or `refined`
+- one-click email resend for finished jobs
 
 ## Request shape
 
@@ -102,7 +114,12 @@ For prompt inspection:
 - `GET /jobs/<job_id>/artifacts/prompt.metrics.json` exposes a per-part token estimate and audit suggestions
 - `GET /jobs/<job_id>/artifacts/<path>` exposes generated analysis JSON and logs for operator review
 
-This is enough to iterate without a dashboard at first. A dashboard becomes useful once you want saved presets, prompt/version history, and one-click reruns.
+The dashboard is now built in, so the normal operator loop is:
+
+1. open `/ui`
+2. launch a URL-only prospect run
+3. inspect the preview, audits, and token metrics
+4. rerun as `refined` only when the page is worth polishing further
 
 ## Lead qualification
 

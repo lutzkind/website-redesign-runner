@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from datetime import datetime, timezone
+from html import escape
 import json
 import os
 import re
@@ -14,7 +16,7 @@ from html import unescape
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import quote_plus, unquote, urljoin, urlparse
+from urllib.parse import parse_qs, quote_plus, unquote, urljoin, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -26,6 +28,7 @@ MODEL = os.environ.get("WEBSITE_REDESIGN_MODEL", "deepseek/deepseek-v4-flash")
 ROOT = Path(os.environ.get("WEBSITE_REDESIGN_ROOT", "/data"))
 SKILLS_DIR = Path(os.environ.get("WEBSITE_REDESIGN_SKILLS_DIR", str(ROOT / "skills")))
 DEFAULT_INDUSTRY = os.environ.get("WEBSITE_REDESIGN_DEFAULT_INDUSTRY", "general")
+DEFAULT_NOTIFY_EMAIL = os.environ.get("WEBSITE_REDESIGN_DEFAULT_NOTIFY_EMAIL", "lutz.kind96@gmail.com").strip()
 FIRECRAWL_URL = os.environ.get("WEBSITE_REDESIGN_FIRECRAWL_URL", "http://127.0.0.1:3092").rstrip("/")
 FIRECRAWL_SCRAPE_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_FIRECRAWL_TIMEOUT", "90"))
 SEO_AUDIT_TIMEOUT = int(os.environ.get("WEBSITE_REDESIGN_SEO_AUDIT_TIMEOUT", "120"))
@@ -908,6 +911,15 @@ def parse_json_body(handler: BaseHTTPRequestHandler) -> dict:
     return json.loads(raw.decode("utf-8"))
 
 
+def parse_form_body(handler: BaseHTTPRequestHandler) -> dict:
+    length = int(handler.headers.get("Content-Length", "0"))
+    raw = handler.rfile.read(length) if length else b""
+    if not raw:
+        return {}
+    parsed = parse_qs(raw.decode("utf-8"), keep_blank_values=True)
+    return {key: values[-1] if values else "" for key, values in parsed.items()}
+
+
 def write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -939,6 +951,113 @@ def get_state(job_id: str) -> dict | None:
     if not path.exists():
         return None
     return load_json(path)
+
+
+def parse_iso8601(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+def format_timestamp(value: str) -> str:
+    parsed = parse_iso8601(value)
+    if not parsed:
+        return value or "—"
+    return parsed.strftime("%Y-%m-%d %H:%M UTC")
+
+
+def format_age_seconds(value: str) -> str:
+    parsed = parse_iso8601(value)
+    if not parsed:
+        return "—"
+    seconds = max(0, int((datetime.now(timezone.utc) - parsed).total_seconds()))
+    if seconds < 60:
+        return f"{seconds}s ago"
+    if seconds < 3600:
+        return f"{seconds // 60}m ago"
+    if seconds < 86400:
+        return f"{seconds // 3600}h ago"
+    return f"{seconds // 86400}d ago"
+
+
+def read_json_if_exists(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    try:
+        return load_json(path)
+    except Exception:
+        return None
+
+
+def derive_preview_url(state: dict) -> str:
+    if state.get("preview_url"):
+        return str(state["preview_url"])
+    publish = state.get("publish") if isinstance(state.get("publish"), dict) else {}
+    preview_slug = state.get("preview_slug") or publish.get("slug")
+    if preview_slug:
+        preview_dir = PREVIEWS_DIR / str(preview_slug)
+        if preview_dir.exists():
+            return f"{PUBLIC_BASE_URL}/preview/{preview_slug}/"
+    return ""
+
+
+def summarize_audits(state: dict) -> dict:
+    summary = {}
+    for key in ("content", "seo", "lighthouse", "axe", "impeccable"):
+        payload = state.get(key)
+        if not isinstance(payload, dict):
+            continue
+        summary[key] = payload.get("status") or ("present" if payload else "missing")
+    return summary
+
+
+def get_job_summary(state: dict) -> dict:
+    job_id = state.get("job_id", "")
+    request = state.get("request", {})
+    source_capture = state.get("source_capture", {})
+    metrics = read_json_if_exists(job_dir_path(job_id) / "prompt.metrics.json") or {}
+    classification = source_capture.get("classification", {})
+    preview_url = derive_preview_url(state)
+    email = state.get("email") if isinstance(state.get("email"), dict) else None
+    return {
+        "job_id": job_id,
+        "status": state.get("status", "unknown"),
+        "step": state.get("step", ""),
+        "website_url": request.get("website_url", ""),
+        "client_slug": request.get("client_slug", ""),
+        "run_mode": request.get("run_mode", ""),
+        "industry": request.get("industry", ""),
+        "detected_industry": classification.get("industry", request.get("industry", "")),
+        "business_subtype": (source_capture.get("component_blueprint") or {}).get("business_subtype", ""),
+        "family": (source_capture.get("design_engine") or {}).get("family", ""),
+        "generator_profile": request.get("generator_profile", ""),
+        "created_at": state.get("created_at", ""),
+        "updated_at": state.get("updated_at", ""),
+        "created_label": format_timestamp(state.get("created_at", "")),
+        "updated_label": format_timestamp(state.get("updated_at", "")),
+        "updated_age": format_age_seconds(state.get("updated_at", "")),
+        "preview_url": preview_url,
+        "estimated_tokens": metrics.get("estimated_total_tokens"),
+        "audits": summarize_audits(state),
+        "notify_email": request.get("notify_email", ""),
+        "email_sent": bool(email and email.get("exit_code") == 0),
+        "email_exit_code": email.get("exit_code") if email else None,
+    }
+
+
+def list_job_states(limit: int = 200) -> list[dict]:
+    states: list[dict] = []
+    for path in JOBS_DIR.glob("job_*/state.json"):
+        try:
+            state = load_json(path)
+        except Exception:
+            continue
+        states.append(state)
+    states.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
+    return states[:limit]
 
 
 def run_command(
@@ -1655,7 +1774,7 @@ def normalize_request(payload: dict) -> dict:
         "dry_run": bool(payload.get("dry_run", False)),
         "hostname": parsed.netloc,
         "callback_url": str(payload.get("callback_url", "")).strip(),
-        "notify_email": str(payload.get("notify_email", "")).strip(),
+        "notify_email": str(payload.get("notify_email") or DEFAULT_NOTIFY_EMAIL).strip(),
         "industry": industry,
         "design_family": normalize_design_family(design_family_input) if design_family_input else "",
         "enabled_skills": normalized_skills or list(DEFAULT_SKILLS),
@@ -4058,7 +4177,7 @@ def safe_send_callback(job_id: str, callback_url: str, state: dict) -> None:
 
 
 def send_job_email(request: dict, state: dict) -> dict | None:
-    notify_email = request.get("notify_email", "").strip()
+    notify_email = str(request.get("notify_email") or DEFAULT_NOTIFY_EMAIL).strip()
     if not notify_email:
         return None
 
@@ -4079,7 +4198,7 @@ def send_job_email(request: dict, state: dict) -> dict | None:
         f"Status URL: {PUBLIC_BASE_URL}/jobs/{state.get('job_id', '')}",
     ]
     if success:
-        body_lines.append(f"Preview URL: {state.get('preview_url', '')}")
+        body_lines.append(f"Preview URL: {state.get('preview_url') or derive_preview_url(state)}")
     else:
         body_lines.append(f"Error: {state.get('error', 'Unknown error')}")
     body_lines.extend(["", "This job was processed automatically."])
@@ -4099,6 +4218,413 @@ def send_job_email(request: dict, state: dict) -> dict | None:
         "stdout": result.stdout,
         "stderr": result.stderr,
     }
+
+
+def enqueue_job(request: dict) -> dict:
+    job_id = f"job_{uuid.uuid4().hex[:12]}"
+    job_dir = job_dir_path(job_id)
+    job_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "job_id": job_id,
+        "status": "queued",
+        "step": "queued",
+        "request": request,
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+        "model": MODEL,
+    }
+    write_json(job_state_path(job_id), state)
+    thread = threading.Thread(target=process_job, args=(job_id, request), daemon=True)
+    thread.start()
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "status_url": f"{PUBLIC_BASE_URL}/jobs/{job_id}",
+        "prompt_url": f"{PUBLIC_BASE_URL}/jobs/{job_id}/prompt",
+        "prompt_parts_url": f"{PUBLIC_BASE_URL}/jobs/{job_id}/prompt-parts",
+    }
+
+
+def render_ui_layout(title: str, body: str, extra_head: str = "", extra_scripts: str = "") -> str:
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape(title)}</title>
+  <style>
+    :root {{
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-soft: #172036;
+      --line: #24324d;
+      --text: #e5edf7;
+      --muted: #9fb0c8;
+      --accent: #f59e0b;
+      --green: #22c55e;
+      --red: #ef4444;
+      --blue: #60a5fa;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      background: linear-gradient(180deg, #09111f 0%, var(--bg) 100%);
+      color: var(--text);
+    }}
+    a {{ color: #fcd34d; text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    .shell {{ max-width: 1440px; margin: 0 auto; padding: 28px; }}
+    .topbar {{
+      display: flex; justify-content: space-between; align-items: center; gap: 18px; margin-bottom: 24px;
+      padding: 18px 22px; background: rgba(17,24,39,0.92); border: 1px solid var(--line); border-radius: 20px;
+      backdrop-filter: blur(12px);
+    }}
+    .brand h1 {{ margin: 0; font-size: 24px; }}
+    .brand p {{ margin: 6px 0 0; color: var(--muted); }}
+    .nav {{ display: flex; gap: 14px; flex-wrap: wrap; }}
+    .nav a {{
+      padding: 10px 14px; border-radius: 999px; background: var(--panel-soft); border: 1px solid var(--line);
+      color: var(--text);
+    }}
+    .grid {{ display: grid; gap: 18px; }}
+    .stats {{ grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 22px; }}
+    .card {{
+      background: rgba(17,24,39,0.92); border: 1px solid var(--line); border-radius: 20px; padding: 18px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.22);
+    }}
+    .stat-label {{ color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }}
+    .stat-value {{ font-size: 28px; font-weight: 700; margin-top: 8px; }}
+    .two-col {{ grid-template-columns: minmax(320px, 420px) minmax(0, 1fr); align-items: start; }}
+    .stack {{ display: grid; gap: 18px; }}
+    label {{ display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }}
+    input, select, textarea {{
+      width: 100%; border-radius: 12px; border: 1px solid var(--line); background: #0b1326; color: var(--text);
+      padding: 11px 12px; font: inherit;
+    }}
+    textarea {{ min-height: 84px; resize: vertical; }}
+    .row {{ display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }}
+    .btn {{
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer;
+      padding: 11px 16px; border-radius: 12px; border: 1px solid transparent; font-weight: 600; font: inherit;
+    }}
+    .btn-primary {{ background: var(--accent); color: #1f2937; }}
+    .btn-secondary {{ background: var(--panel-soft); color: var(--text); border-color: var(--line); }}
+    .btn-danger {{ background: rgba(239,68,68,0.12); color: #fecaca; border-color: rgba(239,68,68,0.35); }}
+    .toolbar {{ display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }}
+    .pill {{
+      display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px;
+      font-size: 12px; border: 1px solid var(--line); background: #0b1326; color: var(--muted);
+    }}
+    .pill.ok {{ color: #bbf7d0; border-color: rgba(34,197,94,0.35); }}
+    .pill.warn {{ color: #fde68a; border-color: rgba(245,158,11,0.35); }}
+    .pill.bad {{ color: #fecaca; border-color: rgba(239,68,68,0.35); }}
+    .jobs-table {{ width: 100%; border-collapse: collapse; }}
+    .jobs-table th, .jobs-table td {{ text-align: left; padding: 12px 10px; border-bottom: 1px solid rgba(36,50,77,0.8); vertical-align: top; }}
+    .jobs-table th {{ color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }}
+    .jobs-table tr:hover {{ background: rgba(96,165,250,0.04); }}
+    .small {{ font-size: 12px; color: var(--muted); }}
+    .muted {{ color: var(--muted); }}
+    .kv {{ display: grid; gap: 10px; }}
+    .kv div {{ padding: 10px 12px; background: #0b1326; border: 1px solid var(--line); border-radius: 12px; }}
+    .kv strong {{ display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }}
+    .pre {{
+      white-space: pre-wrap; word-break: break-word; background: #08101d; border: 1px solid var(--line);
+      border-radius: 14px; padding: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+      max-height: 420px; overflow: auto;
+    }}
+    iframe {{
+      width: 100%; min-height: 760px; border: 1px solid var(--line); border-radius: 18px; background: #fff;
+    }}
+    details summary {{ cursor: pointer; font-weight: 600; }}
+    .actions {{ display: flex; gap: 10px; flex-wrap: wrap; }}
+    @media (max-width: 1100px) {{
+      .two-col {{ grid-template-columns: 1fr; }}
+    }}
+  </style>
+  {extra_head}
+</head>
+<body>
+  <div class="shell">
+    <div class="topbar">
+      <div class="brand">
+        <h1>Website Redesign Runner UI</h1>
+        <p>Internal operator dashboard for runs, audits, previews, and reruns.</p>
+      </div>
+      <div class="nav">
+        <a href="/ui">Dashboard</a>
+      </div>
+    </div>
+    {body}
+  </div>
+  {extra_scripts}
+</body>
+</html>"""
+
+
+def render_dashboard_html() -> str:
+    states = list_job_states(250)
+    summaries = [get_job_summary(state) for state in states]
+    stats = {
+        "total": len(summaries),
+        "running": sum(1 for item in summaries if item["status"] == "running"),
+        "completed": sum(1 for item in summaries if item["status"] == "completed"),
+        "failed": sum(1 for item in summaries if item["status"] == "failed"),
+        "prospect": sum(1 for item in summaries if item["run_mode"] == "prospect"),
+        "refined": sum(1 for item in summaries if item["run_mode"] == "refined"),
+    }
+    rows = []
+    for item in summaries:
+        preview_cell = f'<a href="{escape(item["preview_url"])}" target="_blank">Preview</a>' if item["preview_url"] else "—"
+        audit_bits = []
+        for key, value in item["audits"].items():
+            cls = "ok" if value in {"clean", "passed"} else ("warn" if value in {"findings", "present"} else "bad")
+            audit_bits.append(f'<span class="pill {cls}">{escape(key)}: {escape(str(value))}</span>')
+        email_text = "sent" if item["email_sent"] else ("pending" if item["notify_email"] else "none")
+        rows.append(
+            f"""
+            <tr data-search="{escape(' '.join(filter(None, [item['job_id'], item['website_url'], item['run_mode'], item['industry'], item['business_subtype'], item['family']])).lower())}">
+              <td><a href="/ui/jobs/{escape(item['job_id'])}">{escape(item['job_id'])}</a><div class="small">{escape(item['updated_age'])}</div></td>
+              <td><span class="pill {'ok' if item['status']=='completed' else ('bad' if item['status']=='failed' else 'warn')}">{escape(item['status'])}</span><div class="small">{escape(item['step'])}</div></td>
+              <td>{escape(item['run_mode'] or '—')}<div class="small">{escape(item['generator_profile'] or '—')}</div></td>
+              <td>{escape(item['detected_industry'] or item['industry'] or '—')}<div class="small">{escape(item['business_subtype'] or '—')}</div></td>
+              <td>{escape(item['family'] or '—')}</td>
+              <td>{escape(str(item['estimated_tokens'] or '—'))}</td>
+              <td>{''.join(audit_bits) or '—'}</td>
+              <td>{escape(email_text)}</td>
+              <td>{preview_cell}</td>
+            </tr>
+            """
+        )
+    body = f"""
+    <div class="grid stats">
+      <div class="card"><div class="stat-label">Total Jobs</div><div class="stat-value">{stats['total']}</div></div>
+      <div class="card"><div class="stat-label">Running</div><div class="stat-value">{stats['running']}</div></div>
+      <div class="card"><div class="stat-label">Completed</div><div class="stat-value">{stats['completed']}</div></div>
+      <div class="card"><div class="stat-label">Failed</div><div class="stat-value">{stats['failed']}</div></div>
+      <div class="card"><div class="stat-label">Prospect</div><div class="stat-value">{stats['prospect']}</div></div>
+      <div class="card"><div class="stat-label">Refined</div><div class="stat-value">{stats['refined']}</div></div>
+    </div>
+    <div class="grid two-col">
+      <div class="stack">
+        <div class="card">
+          <h2 style="margin-top:0">Start a Run</h2>
+          <form method="post" action="/ui/jobs">
+            <label for="website_url">Website URL</label>
+            <input id="website_url" name="website_url" type="url" placeholder="https://example.com" required>
+            <div class="row" style="margin-top:12px">
+              <div>
+                <label for="run_mode">Run mode</label>
+                <select id="run_mode" name="run_mode">
+                  <option value="prospect">prospect</option>
+                  <option value="refined">refined</option>
+                </select>
+              </div>
+              <div>
+                <label for="notify_email">Notify email</label>
+                <input id="notify_email" name="notify_email" type="email" value="{escape(DEFAULT_NOTIFY_EMAIL)}">
+              </div>
+            </div>
+            <div style="margin-top:12px">
+              <label for="brand_notes">Optional notes</label>
+              <textarea id="brand_notes" name="brand_notes" placeholder="Optional operator notes"></textarea>
+            </div>
+            <div class="actions" style="margin-top:14px">
+              <button class="btn btn-primary" type="submit">Start job</button>
+            </div>
+          </form>
+        </div>
+        <div class="card">
+          <h2 style="margin-top:0">How to Use</h2>
+          <div class="small">Prospect mode is the cheap first-pass path. Refined mode enables the full audit stack for customer-grade polish.</div>
+          <div class="kv" style="margin-top:12px">
+            <div><strong>Prospect</strong>Lean generation, strict expansion, content + SEO audits, no Lighthouse/axe/impeccable.</div>
+            <div><strong>Refined</strong>Balanced generation, richer enrichment, content + SEO autofix, plus Lighthouse, axe, and impeccable.</div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="toolbar">
+          <h2 style="margin:0; flex:1">Recent Jobs</h2>
+          <input id="job-filter" type="search" placeholder="Filter by URL, family, subtype, run mode" style="max-width:360px">
+        </div>
+        <table class="jobs-table" id="jobs-table">
+          <thead>
+            <tr>
+              <th>Job</th>
+              <th>Status</th>
+              <th>Mode</th>
+              <th>Industry</th>
+              <th>Family</th>
+              <th>Tokens</th>
+              <th>Audits</th>
+              <th>Email</th>
+              <th>Preview</th>
+            </tr>
+          </thead>
+          <tbody>
+            {''.join(rows) if rows else '<tr><td colspan=\"9\" class=\"muted\">No jobs yet.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    """
+    script = """
+    <script>
+    const filter = document.getElementById('job-filter');
+    const rows = Array.from(document.querySelectorAll('#jobs-table tbody tr'));
+    if (filter) {
+      filter.addEventListener('input', () => {
+        const q = filter.value.trim().toLowerCase();
+        for (const row of rows) {
+          const hay = row.getAttribute('data-search') || '';
+          row.style.display = !q || hay.includes(q) ? '' : 'none';
+        }
+      });
+    }
+    </script>
+    """
+    return render_ui_layout("Website Redesign Runner UI", body, extra_scripts=script)
+
+
+def render_job_detail_html(job_id: str, state: dict) -> str:
+    summary = get_job_summary(state)
+    job_dir = job_dir_path(job_id)
+    request = state.get("request", {})
+    source_capture = state.get("source_capture", {})
+    prompt_metrics = read_json_if_exists(job_dir / "prompt.metrics.json")
+    prompt_parts = read_json_if_exists(job_dir / "prompt.parts.json")
+    component_blueprint = read_json_if_exists(job_dir / "source" / "analysis" / "component-blueprint.json")
+    content_blueprint = read_json_if_exists(job_dir / "source" / "analysis" / "content-blueprint.json")
+    concept_blueprint = read_json_if_exists(job_dir / "source" / "analysis" / "concept-blueprint.json")
+    seo_blueprint = read_json_if_exists(job_dir / "source" / "analysis" / "seo-blueprint.json")
+    classification = read_json_if_exists(job_dir / "source" / "analysis" / "classification.json")
+    planning_payload = {
+        "classification": classification or source_capture.get("classification"),
+        "design_engine": source_capture.get("design_engine"),
+        "component_blueprint": component_blueprint or source_capture.get("component_blueprint"),
+        "content_blueprint": content_blueprint,
+        "concept_blueprint": concept_blueprint,
+        "seo_blueprint": seo_blueprint,
+    }
+
+    artifact_rows = []
+    for rel in (
+        "prompt.txt",
+        "prompt.parts.json",
+        "prompt.metrics.json",
+        "source/analysis/business-profile.json",
+        "source/analysis/classification.json",
+        "source/analysis/design-engine.json",
+        "source/analysis/component-blueprint.json",
+        "source/analysis/content-blueprint.json",
+        "source/analysis/concept-blueprint.json",
+        "source/analysis/seo-blueprint.json",
+        "content-audit.json",
+        "seo-audit.json",
+        "lighthouse-audit.json",
+        "axe-audit.json",
+        "impeccable.json",
+        "dist/redesign-summary.md",
+    ):
+        if (job_dir / rel).exists():
+            artifact_rows.append(f'<div><a href="/jobs/{escape(job_id)}/artifacts/{escape(rel)}" target="_blank">{escape(rel)}</a></div>')
+
+    audit_sections = []
+    for key in ("content", "seo", "lighthouse", "axe", "impeccable"):
+        payload = state.get(key)
+        if not isinstance(payload, dict):
+            continue
+        audit_sections.append(
+            f"""
+            <details class="card">
+              <summary>{escape(key)} audit — {escape(str(payload.get('status', 'unknown')))}</summary>
+              <div class="pre" style="margin-top:12px">{escape(json.dumps(payload, indent=2))}</div>
+            </details>
+            """
+        )
+
+    body = f"""
+    <div class="grid two-col">
+      <div class="stack">
+        <div class="card">
+          <div class="actions" style="justify-content:space-between; align-items:flex-start">
+            <div>
+              <h2 style="margin:0">{escape(job_id)}</h2>
+              <div class="small">{escape(summary['website_url'])}</div>
+            </div>
+            <div class="actions">
+              {f'<a class="btn btn-secondary" href="{escape(summary["preview_url"])}" target="_blank">Open preview</a>' if summary['preview_url'] else ''}
+              <a class="btn btn-secondary" href="/jobs/{escape(job_id)}" target="_blank">Raw state JSON</a>
+            </div>
+          </div>
+          <div class="kv" style="margin-top:14px">
+            <div><strong>Status</strong><span class="pill {'ok' if summary['status']=='completed' else ('bad' if summary['status']=='failed' else 'warn')}">{escape(summary['status'])}</span> <span class="small">{escape(summary['step'])}</span></div>
+            <div><strong>Run mode</strong>{escape(summary['run_mode'] or '—')} / {escape(summary['generator_profile'] or '—')}</div>
+            <div><strong>Detected niche</strong>{escape(summary['detected_industry'] or '—')} / {escape(summary['business_subtype'] or '—')}</div>
+            <div><strong>Family</strong>{escape(summary['family'] or '—')}</div>
+            <div><strong>Prompt tokens</strong>{escape(str(summary['estimated_tokens'] or '—'))}</div>
+            <div><strong>Notify email</strong>{escape(summary['notify_email'] or '—')}</div>
+            <div><strong>Created</strong>{escape(summary['created_label'])}</div>
+            <div><strong>Updated</strong>{escape(summary['updated_label'])}</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 style="margin-top:0">Actions</h3>
+          <div class="actions">
+            <form method="post" action="/ui/jobs/{escape(job_id)}/rerun">
+              <input type="hidden" name="run_mode" value="prospect">
+              <button class="btn btn-secondary" type="submit">Rerun as prospect</button>
+            </form>
+            <form method="post" action="/ui/jobs/{escape(job_id)}/rerun">
+              <input type="hidden" name="run_mode" value="refined">
+              <button class="btn btn-secondary" type="submit">Rerun as refined</button>
+            </form>
+            <form method="post" action="/ui/jobs/{escape(job_id)}/resend-email">
+              <input type="hidden" name="notify_email" value="{escape(summary['notify_email'] or DEFAULT_NOTIFY_EMAIL)}">
+              <button class="btn btn-secondary" type="submit">Resend email</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 style="margin-top:0">Artifacts</h3>
+          {''.join(artifact_rows) or '<div class="muted">No artifacts found yet.</div>'}
+        </div>
+
+        <div class="card">
+          <h3 style="margin-top:0">Request</h3>
+          <div class="pre">{escape(json.dumps(request, indent=2))}</div>
+        </div>
+      </div>
+
+      <div class="stack">
+        <div class="card">
+          <h3 style="margin-top:0">Preview</h3>
+          {f'<iframe src="{escape(summary["preview_url"])}" loading="lazy"></iframe>' if summary['preview_url'] else '<div class="muted">Preview not published yet.</div>'}
+        </div>
+
+        <div class="card">
+          <h3 style="margin-top:0">Classification & Planning</h3>
+          <div class="pre">{escape(json.dumps(planning_payload, indent=2))}</div>
+        </div>
+
+        <div class="card">
+          <h3 style="margin-top:0">Prompt Metrics</h3>
+          <div class="pre">{escape(json.dumps(prompt_metrics or {'status': 'missing'}, indent=2))}</div>
+        </div>
+
+        <div class="card">
+          <h3 style="margin-top:0">Prompt Parts</h3>
+          <div class="pre">{escape(json.dumps(prompt_parts or {'status': 'missing'}, indent=2))}</div>
+        </div>
+
+        {''.join(audit_sections) or '<div class="card muted">No audit payloads captured.</div>'}
+      </div>
+    </div>
+    """
+    return render_ui_layout(f"Job {job_id}", body)
 
 
 def process_job(job_id: str, request: dict) -> None:
@@ -4188,6 +4714,14 @@ def process_job(job_id: str, request: dict) -> None:
             step="completed",
             preview_url=preview_url,
             preview_slug=request["client_slug"],
+            preview_path=f"/preview/{request['client_slug']}/",
+            final_preview_url=preview_url,
+            publish={
+                "status": "published",
+                "slug": request["client_slug"],
+                "url": preview_url,
+                "path": str(PREVIEWS_DIR / request["client_slug"]),
+            },
         )
         completion_state = get_state(job_id) or {}
         email_result = send_job_email(request, completion_state)
@@ -4299,8 +4833,39 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _send_html(self, body: str, status: int = 200) -> None:
+        data = body.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _redirect(self, location: str, status: int = 303) -> None:
+        self.send_response(status)
+        self.send_header("Location", location)
+        self.end_headers()
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
+
+        if parsed.path in {"/", "/ui"}:
+            self._send_html(render_dashboard_html())
+            return
+
+        if parsed.path == "/ui/api/jobs":
+            self._send_json({"jobs": [get_job_summary(state) for state in list_job_states(250)]})
+            return
+
+        if parsed.path.startswith("/ui/jobs/"):
+            parts = parsed.path.strip("/").split("/")
+            job_id = parts[2] if len(parts) >= 3 else ""
+            state = get_state(job_id)
+            if not state:
+                self._send_json({"error": "job not found"}, status=404)
+                return
+            self._send_html(render_job_detail_html(job_id, state))
+            return
 
         if parsed.path == "/health":
             self._send_json(
@@ -4310,7 +4875,7 @@ class Handler(BaseHTTPRequestHandler):
                     "public_base_url": PUBLIC_BASE_URL,
                     "firecrawl_url": FIRECRAWL_URL,
                     "model_policy": "deny-openrouter",
-                    "endpoints": ["/health", "/skills", "/jobs", "/qualify", "/qualification-runs/<id>"],
+                    "endpoints": ["/", "/ui", "/health", "/skills", "/jobs", "/qualify", "/qualification-runs/<id>"],
                     "run_modes": sorted(ALLOWED_RUN_MODES),
                     "generator_profiles": sorted(ALLOWED_GENERATOR_PROFILES),
                     "design_families": sorted(ALLOWED_DESIGN_FAMILIES),
@@ -4441,6 +5006,57 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+
+        if parsed.path == "/ui/jobs":
+            try:
+                payload = parse_form_body(self)
+                request = normalize_request(payload)
+                result = enqueue_job(request)
+            except Exception as exc:
+                self._send_html(render_ui_layout("Job creation failed", f'<div class="card"><h2>Job creation failed</h2><div class="pre">{escape(str(exc))}</div><p><a href="/ui">Back to dashboard</a></p></div>'), status=400)
+                return
+            self._redirect(f"/ui/jobs/{result['job_id']}")
+            return
+
+        if parsed.path.startswith("/ui/jobs/") and parsed.path.endswith("/rerun"):
+            parts = parsed.path.strip("/").split("/")
+            job_id = parts[2] if len(parts) >= 3 else ""
+            state = get_state(job_id)
+            if not state:
+                self._send_json({"error": "job not found"}, status=404)
+                return
+            try:
+                payload = parse_form_body(self)
+                request = dict(state.get("request", {}))
+                override_mode = str(payload.get("run_mode", "")).strip().lower()
+                if override_mode:
+                    request["run_mode"] = override_mode
+                request["dry_run"] = False
+                request = normalize_request(request)
+                result = enqueue_job(request)
+            except Exception as exc:
+                self._send_html(render_ui_layout("Rerun failed", f'<div class="card"><h2>Rerun failed</h2><div class="pre">{escape(str(exc))}</div><p><a href="/ui/jobs/{escape(job_id)}">Back to job</a></p></div>'), status=400)
+                return
+            self._redirect(f"/ui/jobs/{result['job_id']}")
+            return
+
+        if parsed.path.startswith("/ui/jobs/") and parsed.path.endswith("/resend-email"):
+            parts = parsed.path.strip("/").split("/")
+            job_id = parts[2] if len(parts) >= 3 else ""
+            state = get_state(job_id)
+            if not state:
+                self._send_json({"error": "job not found"}, status=404)
+                return
+            payload = parse_form_body(self)
+            request = dict(state.get("request", {}))
+            request["notify_email"] = str(payload.get("notify_email") or request.get("notify_email") or DEFAULT_NOTIFY_EMAIL).strip()
+            state["preview_url"] = state.get("preview_url") or derive_preview_url(state)
+            result = send_job_email(request, state)
+            if result is not None:
+                update_state(job_id, email=result, request=request)
+            self._redirect(f"/ui/jobs/{job_id}")
+            return
+
         if parsed.path == "/qualify":
             try:
                 payload = parse_json_body(self)
@@ -4463,32 +5079,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": str(exc)}, status=400)
             return
 
-        job_id = f"job_{uuid.uuid4().hex[:12]}"
-        job_dir = job_dir_path(job_id)
-        job_dir.mkdir(parents=True, exist_ok=True)
-        state = {
-            "job_id": job_id,
-            "status": "queued",
-            "step": "queued",
-            "request": request,
-            "created_at": now_iso(),
-            "updated_at": now_iso(),
-            "model": MODEL,
-        }
-        write_json(job_state_path(job_id), state)
-
-        thread = threading.Thread(target=process_job, args=(job_id, request), daemon=True)
-        thread.start()
-        self._send_json(
-            {
-                "job_id": job_id,
-                "status": "queued",
-                "status_url": f"{PUBLIC_BASE_URL}/jobs/{job_id}",
-                "prompt_url": f"{PUBLIC_BASE_URL}/jobs/{job_id}/prompt",
-                "prompt_parts_url": f"{PUBLIC_BASE_URL}/jobs/{job_id}/prompt-parts",
-            },
-            status=HTTPStatus.ACCEPTED,
-        )
+        self._send_json(enqueue_job(request), status=HTTPStatus.ACCEPTED)
 
 
 def main() -> None:
