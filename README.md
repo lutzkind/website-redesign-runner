@@ -147,7 +147,8 @@ Example request:
 
 Response highlights:
 
-- `assessment.qualification_status`: `target`, `review`, or `skip`
+- `assessment.qualification_status`: `target`, `review`, `skip`, or `failed`
+- `failed` means the site could not be evaluated reliably, for example due to a bot challenge, captcha, or fetch failure
 - `assessment.website_quality_score`: higher means the current site is stronger
 - `assessment.redesign_opportunity_score`: higher means better redesign outreach target
 - `assessment.weak_signals`: why the site looks weak

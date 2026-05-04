@@ -2602,12 +2602,12 @@ def assess_website_quality(request: dict, source_context: dict) -> dict:
         summary = "The lead points to a social profile rather than a standalone website, so it should be handled in a separate outreach bucket."
         weak_signals.insert(0, "the provided URL is a social profile, not a standalone website")
     elif source_flags.get("fetch_failed"):
-        qualification_status = "review"
-        summary = "The site could not be reliably fetched during automated evaluation, so it should be reviewed manually before outreach."
+        qualification_status = "failed"
+        summary = "The site could not be reliably fetched during automated evaluation, so this evaluation attempt should be treated as failed."
         weak_signals.insert(0, "the site could not be fetched reliably during evaluation")
     elif source_flags.get("is_bot_challenge"):
-        qualification_status = "review"
-        summary = "The site blocked automated evaluation with a bot challenge, so it should be reviewed manually before outreach."
+        qualification_status = "failed"
+        summary = "The site blocked automated evaluation with a bot challenge, so this evaluation attempt should be treated as failed."
         weak_signals.insert(0, "the site returned a bot-protection or challenge page during evaluation")
     elif restaurant_like and qualification_status == "target":
         has_good_restaurant_baseline = (

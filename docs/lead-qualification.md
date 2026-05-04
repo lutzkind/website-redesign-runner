@@ -30,7 +30,7 @@ Add these fields to your leads table:
 5. HTTP Request to `POST /qualify`
 6. IF `assessment.qualification_status == "target"`
 7. NocoDB update record with scores/reasons
-8. Optional: pass only `target` rows into email enrichment or outreach
+8. Optional: pass only `target` rows into email enrichment or outreach, while routing `failed` rows into a retry or manual-review branch
 
 The repo now includes an importable workflow at `workflows/scraper-leads-qualification.n8n.json`.
 It is preconfigured for:
@@ -60,6 +60,7 @@ After import, do two setup steps in `n8n`:
 ## Response fields to persist
 
 - `assessment.qualification_status`
+  possible values: `target`, `review`, `skip`, `failed`
 - `assessment.website_quality_score`
 - `assessment.redesign_opportunity_score`
 - `assessment.confidence`
@@ -94,9 +95,10 @@ Interpretation:
 - `target`: weak enough to justify redesign outreach now
 - `review`: mixed signals, worth human review
 - `skip`: site already looks competent enough that redesign outreach is lower priority
+- `failed`: the site could not be evaluated reliably because it was inaccessible, blocked, or challenge-gated
 
 ## Practical first pass
 
-Start strict. Only outreach `target` rows. Keep `review` rows in the table for later manual inspection, and ignore `skip`.
+Start strict. Only outreach `target` rows. Keep `review` rows in the table for later manual inspection, ignore `skip`, and treat `failed` as an evaluator failure state for retry or separate investigation.
 
 That gives you a cleaner first outbound motion and avoids wasting volume on businesses whose websites already clear a decent baseline.
