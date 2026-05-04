@@ -37,6 +37,7 @@ The internal WebUI now ships with the runner and is intended to be the default o
 - per-job detail pages with embedded preview, prompt metrics, classification output, component/content/SEO blueprints, and audit payloads
 - one-click reruns as `prospect` or `refined`
 - one-click email resend for finished jobs
+- automatic default email fallback when a run is submitted without `notify_email`
 
 ## Request shape
 
@@ -179,9 +180,11 @@ This makes the design system tunable without changing Python code:
 ## Analysis pipeline
 
 - the runner uses Firecrawl to scrape the source site into markdown + HTML
+- if the source resolves to a bot challenge, security verification wall, or near-zero business signal, the runner now rejects the build instead of hallucinating a new business
 - it extracts source asset candidates so the model can reuse logos/photos when helpful instead of returning imageless redesigns
 - the runner scores source completeness and, when needed, uses Firecrawl search to enrich weak websites with external business context
 - the runner writes `/jobs/<job_id>/source/analysis/business-profile.json` so prompts can use compact structured facts instead of raw scrape dumps
+- URL-only runs now infer industry and subtype from hostname, source content, key links, and extracted business facts before family selection
 - the runner selects an internal design family and writes `/jobs/<job_id>/source/analysis/design-engine.json`
 - the runner builds a MagicUI-inspired component vocabulary and writes `/jobs/<job_id>/source/analysis/component-blueprint.json`
 - the runner generates a bespoke concept blueprint and writes `/jobs/<job_id>/source/analysis/concept-blueprint.json`

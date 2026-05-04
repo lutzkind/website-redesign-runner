@@ -1389,6 +1389,18 @@ INDUSTRY_DETECTION_RULES = {
 }
 
 
+def hostname_terms(hostname: str) -> list[str]:
+    host = (hostname or "").lower()
+    for prefix in ("www.", "m.", "app."):
+        if host.startswith(prefix):
+            host = host[len(prefix):]
+    host = host.split(":")[0]
+    if "." in host:
+        host = host.rsplit(".", 1)[0]
+    tokens = [token for token in re.split(r"[^a-z0-9]+", host) if token and token not in {"com", "net", "org", "co", "biz"}]
+    return tokens
+
+
 def detect_industry_from_source(
     request: dict,
     source_summary: dict,
@@ -1406,9 +1418,11 @@ def detect_industry_from_source(
             "scores": {explicit_industry: 1.0},
         }
 
+    host_tokens = hostname_terms(request.get("hostname", ""))
     text_parts = [
         request.get("website_url", ""),
         request.get("hostname", ""),
+        " ".join(host_tokens),
         source_summary.get("title", ""),
         source_summary.get("description", ""),
         source_summary.get("markdown_excerpt", ""),
@@ -1430,10 +1444,16 @@ def detect_industry_from_source(
             if term in text:
                 score += 2.0
                 signals.append(term)
+            elif any(term.replace(" ", "") == token for token in host_tokens):
+                score += 2.2
+                signals.append(f"host:{term}")
         for term in rule.get("weak", set()):
             if term in text:
                 score += 0.75
                 signals.append(term)
+            elif any(term.replace(" ", "") == token for token in host_tokens):
+                score += 1.0
+                signals.append(f"host:{term}")
         if score > 0:
             scores[industry] = round(score, 2)
             signals_by_industry[industry] = signals[:8]
@@ -1474,10 +1494,14 @@ def infer_business_subtype(request: dict, business_profile: dict, source_summary
     industry = request["industry"]
     text = " ".join(
         [
+            request.get("hostname", ""),
             source_summary.get("title", ""),
             source_summary.get("description", ""),
+            source_summary.get("markdown_excerpt", ""),
             business_profile.get("business_name", ""),
             " ".join(business_profile.get("core_highlights", [])),
+            " ".join(source_summary.get("top_links", [])[:8]),
+            " ".join(business_profile.get("external_enrichment_notes", [])[:3]),
         ]
     ).lower()
     for subtype, config in NICHE_SUBTYPE_LIBRARY.items():
@@ -1708,6 +1732,30 @@ def build_content_blueprint(request: dict, business_profile: dict, source_summar
         required_sections = list(niche["required_sections"])
     if niche.get("rewrite_targets"):
         rewrite_targets.extend(niche["rewrite_targets"])
+    section_brief = []
+    for section in required_sections:
+        normalized = section.lower()
+        goal = "Rebuild this section with stronger hierarchy and clearer conversion intent."
+        source_mode = "rewrite"
+        if "hero" in normalized:
+            goal = "Write a sharper first impression from scratch using only verified business facts and likely buyer intent."
+            source_mode = "rewrite"
+        elif "menu" in normalized or "service" in normalized or "treatment" in normalized or "package" in normalized:
+            goal = "Rebuild the commercial offer in-page instead of linking away; summarize, group, and elevate the source facts."
+            source_mode = "rebuild"
+        elif "gallery" in normalized or "project" in normalized or "results" in normalized:
+            goal = "Use this section to make the work tangible and visually persuasive without filler captions."
+            source_mode = "recompose"
+        elif "proof" in normalized or "trust" in normalized or "credentials" in normalized or "guarantee" in normalized:
+            goal = "Only use proof that can be supported by real source or enrichment evidence."
+            source_mode = "curate"
+        elif "faq" in normalized or "process" in normalized or "visit" in normalized:
+            goal = "Clarify uncertainty, explain the experience, and answer the next obvious buyer question."
+            source_mode = "rewrite"
+        elif "contact" in normalized or "footer" in normalized or "location" in normalized:
+            goal = "Make location, phone, hours, and the map/directions path concrete and immediately actionable."
+            source_mode = "rebuild"
+        section_brief.append({"section": section, "goal": goal, "source_mode": source_mode})
     return {
         "business_subtype": subtype,
         "rewrite_rule": "Rewrite and improve source copy into sharper, clearer, more persuasive language. Preserve facts, but do not reuse long sentences verbatim.",
@@ -1720,6 +1768,7 @@ def build_content_blueprint(request: dict, business_profile: dict, source_summar
         "required_sections": required_sections,
         "rewrite_targets": list(dict.fromkeys(rewrite_targets)),
         "section_notes": section_notes,
+        "section_brief": section_brief,
     }
 
 
@@ -3217,6 +3266,10 @@ Detected source asset candidates:
 """
 
 
+def compact_json_block(label: str, payload: dict | list) -> str:
+    return f"{label}:\n{json.dumps(payload, ensure_ascii=True, separators=(',', ':'))}"
+
+
 def build_prompt_parts(request: dict, job_dir: Path) -> tuple[dict, list[str]]:
     source_context = request.get("source_context") or {}
     source = source_context.get("source", {})
@@ -3236,168 +3289,197 @@ def build_prompt_parts(request: dict, job_dir: Path) -> tuple[dict, list[str]]:
     compact_skill_directives = render_compact_skill_directives(skill_names, request["industry"])
 
     stable_prefix = f"""You are redesigning a client's website into a polished static preview.
-
-Core rules:
 - Build in ./dist and ensure ./dist/index.html exists.
-- Keep all asset paths relative.
-- Preserve facts, but improve clarity, conversion, and presentation.
-- Keep the result premium, art-directed, and previewable without a build step.
-- Write a concise ./dist/redesign-summary.md before finishing.
-
-Working directives:
+- Keep asset paths relative and the result previewable without a build step.
+- Preserve facts, improve clarity and conversion, and never invent proof.
+- Write ./dist/redesign-summary.md before finishing.
 {compact_skill_directives}
 """
 
-    design_guardrails = """Pre-generation design guardrails:
-- Avoid default-font personality, gradient text, and generic SaaS landing-page patterns.
-- Maintain strong body/CTA contrast and animate only transform/opacity.
-- Use the internal family, component blueprint, and concept blueprint as the primary design system.
-- Include a real location module near the footer with address, hours, phone, and a real map/embed or directions link.
-- Keep navigation internal to the preview; do not reuse legacy source-site URLs.
-- Do not fabricate testimonials, ratings, awards, or statistics.
-- Rewrite source marketing copy; do not lift long paragraphs verbatim.
-"""
+    design_guardrails = compact_json_block(
+        "Design guardrails",
+        {
+            "avoid": [
+                "generic SaaS hero patterns",
+                "gradient text",
+                "low-contrast body or CTA text",
+                "legacy source-site navigation",
+                "fabricated testimonials/ratings/stats",
+                "verbatim long source copy",
+            ],
+            "motion": "transform/opacity only",
+            "location_requirement": "real address/phone/hours plus a real map embed or directions link whenever data exists",
+        },
+    )
 
-    operator_controls = f"""Operator controls:
-- Run mode: {request['run_mode']}
-- Industry: {request['industry']}
-- Design family: {design_engine.get('family') or request.get('design_family') or 'auto'}
-- Generator profile: {request['generator_profile']}
-- Source expansion mode: {request['source_expansion_mode']}
-- Search enrichment: {request['search_enrichment']} (budget={request['search_budget']})
-- Design goal: {request['design_goal'] or 'General premium redesign'}
-- Brand notes: {request['brand_notes'] or 'None'}
-- Additional instructions: {request['extra_instructions'] or 'None'}
-"""
+    operator_controls = compact_json_block(
+        "Operator controls",
+        {
+            "run_mode": request["run_mode"],
+            "industry": request["industry"],
+            "design_family": design_engine.get("family") or request.get("design_family") or "auto",
+            "generator_profile": request["generator_profile"],
+            "source_expansion_mode": request["source_expansion_mode"],
+            "search_enrichment": request["search_enrichment"],
+            "search_budget": request["search_budget"],
+            "design_goal": request["design_goal"] or "General premium redesign",
+            "brand_notes": request["brand_notes"] or "",
+            "extra_instructions": request["extra_instructions"] or "",
+        },
+    )
 
-    business_profile_block = f"""Business profile:
-- Business name: {business_profile.get('business_name', '')}
-- Category: {business_profile.get('category', '')}
-- Address: {business_profile.get('address', 'Unknown')}
-- Phone: {business_profile.get('phone', 'Unknown')}
-- Hours: {business_profile.get('hours', 'Unknown')}
-- Maps link: {business_profile.get('maps_query_url', 'Unavailable')}
-- Core highlights:
-{chr(10).join(f"  - {item}" for item in business_profile.get('core_highlights', [])) or '  - None extracted'}
-"""
+    business_profile_block = compact_json_block(
+        "Business profile",
+        {
+            "name": business_profile.get("business_name", ""),
+            "category": business_profile.get("category", ""),
+            "address": business_profile.get("address", ""),
+            "phone": business_profile.get("phone", ""),
+            "hours": business_profile.get("hours", ""),
+            "maps": business_profile.get("maps_query_url", ""),
+            "highlights": business_profile.get("core_highlights", [])[:5],
+        },
+    )
 
-    seo_requirements_block = f"""SEO requirements:
-- Canonical URL: {seo_blueprint.get('canonical_url', request['website_url'])}
-- Schema type: {seo_blueprint.get('schema_type', 'LocalBusiness')}
-- Title formula: {seo_blueprint.get('title_formula', '')}
-- Meta description focus: {seo_blueprint.get('meta_description_focus', '')}
-- Keywords to reinforce naturally: {summarize_value_list(seo_blueprint.get('content_keywords', []))}
-- OG image strategy: {seo_blueprint.get('og_image_strategy', '')}
-- Heading rule: {seo_blueprint.get('heading_rule', '')}
-- Alt text rule: {seo_blueprint.get('alt_text_rule', '')}
-- Footer/location rule: {seo_blueprint.get('footer_rule', '')}
-"""
+    seo_requirements_block = compact_json_block(
+        "SEO requirements",
+        {
+            "canonical": seo_blueprint.get("canonical_url", request["website_url"]),
+            "schema_type": seo_blueprint.get("schema_type", "LocalBusiness"),
+            "title_formula": seo_blueprint.get("title_formula", ""),
+            "meta_focus": seo_blueprint.get("meta_description_focus", ""),
+            "keywords": seo_blueprint.get("content_keywords", []),
+            "og_image_strategy": seo_blueprint.get("og_image_strategy", ""),
+            "heading_rule": seo_blueprint.get("heading_rule", ""),
+            "alt_text_rule": seo_blueprint.get("alt_text_rule", ""),
+            "footer_rule": seo_blueprint.get("footer_rule", ""),
+        },
+    )
 
-    content_integrity_block = f"""Content integrity requirements:
-- Subtype: {content_blueprint.get('business_subtype', 'general')}
-- Rewrite rule: {content_blueprint.get('rewrite_rule', '')}
-- Proof rule: {content_blueprint.get('proof_rule', '')}
-- Link rule: {content_blueprint.get('link_rule', '')}
-- Menu rule: {content_blueprint.get('menu_rule', 'Not applicable')}
-- Trust signals that may be emphasized:
-{chr(10).join(f"  - {item}" for item in content_blueprint.get('trust_signals', [])) or '  - None extracted'}
-- Required sections:
-{chr(10).join(f"  - {item}" for item in content_blueprint.get('required_sections', [])) or '  - None defined'}
-- Rewrite targets:
-{chr(10).join(f"  - {item}" for item in content_blueprint.get('rewrite_targets', [])) or '  - None defined'}
-- Section notes:
-{chr(10).join(f"  - {item}" for item in content_blueprint.get('section_notes', [])) or '  - None'}
-- Forbidden source URLs:
-{chr(10).join(f"  - {item}" for item in content_blueprint.get('forbidden_urls', [])) or '  - None'}
-"""
+    content_integrity_block = compact_json_block(
+        "Content integrity plan",
+        {
+            "subtype": content_blueprint.get("business_subtype", "general"),
+            "rewrite_rule": content_blueprint.get("rewrite_rule", ""),
+            "proof_rule": content_blueprint.get("proof_rule", ""),
+            "link_rule": content_blueprint.get("link_rule", ""),
+            "menu_rule": content_blueprint.get("menu_rule", "Not applicable"),
+            "trust_signals": content_blueprint.get("trust_signals", [])[:5],
+            "required_sections": content_blueprint.get("required_sections", []),
+            "rewrite_targets": content_blueprint.get("rewrite_targets", []),
+            "section_notes": content_blueprint.get("section_notes", [])[:4],
+            "forbidden_urls": content_blueprint.get("forbidden_urls", []),
+            "section_brief": content_blueprint.get("section_brief", []),
+        },
+    )
 
     classification = source_context.get("classification", {})
-    source_context_block = f"""Source website context:
-- URL: {request['website_url']}
-- Captured source HTML is available under ./source
-- Source title: {source_summary.get('title', '')}
-- Detected industry: {classification.get('industry', request['industry'])} (confidence={classification.get('confidence', 0.0):.2f}, source={classification.get('source', 'unknown')})
-- Detection signals: {summarize_value_list(classification.get('signals', []))}
-- Completeness score: {source.get('completeness', {}).get('score', 0.0):.2f}
-- Completeness notes:
-{chr(10).join(f"  - {item}" for item in source.get('completeness', {}).get('reasons', [])) or '  - None'}
-- Source summary:
-{truncate_text(source_summary.get('markdown_excerpt', '') or 'No Firecrawl summary captured.', limits['source_chars'])}
-- Important discovered links:
-{chr(10).join(f"  - {link}" for link in source_summary.get('top_links', [])[:limits['links']]) or '  - None'}
-- Source asset strength: {concept_blueprint.get('asset_strength', 'unknown')}
-"""
-
-    design_family_block = f"""Internal design family:
-- Family: {design_engine.get('family', 'modern-approachable')}
-- Selection source: {design_engine.get('source', 'inferred')}
-- Rationale: {design_engine.get('rationale', 'No rationale recorded')}
-- Summary: {design_engine.get('profile', {}).get('summary', '')}
-- Typography direction: {design_engine.get('profile', {}).get('typography', '')}
-- Palette logic: {design_engine.get('profile', {}).get('palette', '')}
-- Layout direction: {design_engine.get('profile', {}).get('layout', '')}
-- Component language: {design_engine.get('profile', {}).get('components', '')}
-- Motion rule: {design_engine.get('profile', {}).get('motion', '')}
-- Family anti-patterns: {design_engine.get('profile', {}).get('anti_patterns', '')}
-"""
-
-    component_blueprint_block = f"""MagicUI-inspired component blueprint:
-- Source: {component_blueprint.get('source', 'internal component vocabulary')}
-- Business subtype: {component_blueprint.get('business_subtype', 'general')}
-- Hero pattern: {component_blueprint.get('hero_pattern', '')}
-- Nav pattern: {component_blueprint.get('nav_pattern', '')}
-- CTA pattern: {component_blueprint.get('cta_pattern', '')}
-- Surface pattern: {component_blueprint.get('surface_pattern', '')}
-- Gallery pattern: {component_blueprint.get('gallery_pattern', '')}
-- Proof pattern: {component_blueprint.get('proof_pattern', '')}
-- Menu / offering pattern: {component_blueprint.get('menu_pattern', '')}
-- Footer pattern: {component_blueprint.get('footer_pattern', '')}
-- Motion pattern: {component_blueprint.get('motion_pattern', '')}
-- Decorative pattern: {component_blueprint.get('decor_pattern', '')}
-- Family-specific adaptations:
-{chr(10).join(f"  - {item}" for item in component_blueprint.get('adaptations', [])) or '  - None'}
-"""
-
-    concept_blueprint_block = f"""Concept blueprint:
-- Creative thesis: {concept_blueprint.get('creative_thesis', '')}
-- Typography system: {concept_blueprint.get('typography_system', '')}
-- Color logic: {concept_blueprint.get('color_logic', '')}
-- Layout system: {concept_blueprint.get('layout_system', '')}
-- Component language: {concept_blueprint.get('component_language', '')}
-- Conversion priorities: {summarize_value_list(concept_blueprint.get('conversion_priority', []))}
-- Content focus: {summarize_value_list(concept_blueprint.get('content_focus', []))}
-- Footer requirement: {concept_blueprint.get('footer_requirements', '')}
-- Section flow:
-{chr(10).join(f"  - {item}" for item in concept_blueprint.get('section_flow', [])) or '  - None defined'}
-"""
-    enrichment_lines = []
-    for item in enrichment.get("results", [])[: request["search_budget"]]:
-        enrichment_lines.append(
-            "\n".join(
-                [
-                    f"- {item.get('title', '')}",
-                    f"  URL: {item.get('url', '')}",
-                    f"  Notes: {truncate_text(item.get('description') or item.get('markdown_excerpt', ''), limits['enrichment_chars'])}",
-                ]
-            )
-        )
-    enrichment_block = "External enrichment:\n" + (
-        "\n".join(enrichment_lines)
-        if enrichment_lines
-        else f"- None used ({enrichment.get('error', 'source content considered sufficient')})"
+    source_context_block = compact_json_block(
+        "Source context",
+        {
+            "url": request["website_url"],
+            "title": source_summary.get("title", ""),
+            "detected_industry": classification.get("industry", request["industry"]),
+            "confidence": classification.get("confidence", 0.0),
+            "signals": classification.get("signals", [])[:6],
+            "completeness_score": source.get("completeness", {}).get("score", 0.0),
+            "completeness_notes": source.get("completeness", {}).get("reasons", [])[:4],
+            "summary": truncate_text(source_summary.get("markdown_excerpt", "") or "No Firecrawl summary captured.", limits["source_chars"]),
+            "links": source_summary.get("top_links", [])[:limits["links"]],
+            "asset_strength": concept_blueprint.get("asset_strength", "unknown"),
+        },
     )
-    asset_block = "Image and asset strategy:\n" + render_asset_guidance(request, source_assets)
 
-    implementation_block = """Implementation expectations:
-- Build from the internal design family, component blueprint, and concept blueprint.
-- Use the source for facts, proof, usable assets, and menu/service details, not for visual direction.
-- Rebuild key content inside the redesign instead of linking back to legacy pages.
-- Make the first draft prospect-ready: strong hero, clear CTA, persuasive rewritten copy, and real location info.
-- Include title, description, canonical, OG/Twitter tags, one clear H1, and valid LocalBusiness-style JSON-LD.
-- Use a real map or directions embed/link in the footer/location area; never replace it with decorative imagery.
-- If proof is weak, omit it rather than inventing it.
-- If imagery is weak, preserve usable brand assets and improve the image treatment without leaving the page visually empty.
-"""
+    design_family_block = compact_json_block(
+        "Design family",
+        {
+            "family": design_engine.get("family", "modern-approachable"),
+            "source": design_engine.get("source", "inferred"),
+            "rationale": design_engine.get("rationale", ""),
+            "summary": design_engine.get("profile", {}).get("summary", ""),
+            "typography": design_engine.get("profile", {}).get("typography", ""),
+            "palette": design_engine.get("profile", {}).get("palette", ""),
+            "layout": design_engine.get("profile", {}).get("layout", ""),
+            "components": design_engine.get("profile", {}).get("components", ""),
+        },
+    )
+
+    component_blueprint_block = compact_json_block(
+        "Component blueprint",
+        {
+            "source": component_blueprint.get("source", "internal component vocabulary"),
+            "subtype": component_blueprint.get("business_subtype", "general"),
+            "hero": component_blueprint.get("hero_pattern", ""),
+            "nav": component_blueprint.get("nav_pattern", ""),
+            "cta": component_blueprint.get("cta_pattern", ""),
+            "surface": component_blueprint.get("surface_pattern", ""),
+            "gallery": component_blueprint.get("gallery_pattern", ""),
+            "proof": component_blueprint.get("proof_pattern", ""),
+            "offer": component_blueprint.get("menu_pattern", ""),
+            "footer": component_blueprint.get("footer_pattern", ""),
+            "motion": component_blueprint.get("motion_pattern", ""),
+            "adaptations": component_blueprint.get("adaptations", [])[:5],
+        },
+    )
+
+    concept_blueprint_block = compact_json_block(
+        "Concept blueprint",
+        {
+            "thesis": concept_blueprint.get("creative_thesis", ""),
+            "typography": concept_blueprint.get("typography_system", ""),
+            "color_logic": concept_blueprint.get("color_logic", ""),
+            "layout_system": concept_blueprint.get("layout_system", ""),
+            "conversion_priority": concept_blueprint.get("conversion_priority", []),
+            "content_focus": concept_blueprint.get("content_focus", []),
+            "footer_requirement": concept_blueprint.get("footer_requirements", ""),
+            "section_flow": concept_blueprint.get("section_flow", []),
+        },
+    )
+    enrichment_block = compact_json_block(
+        "External enrichment",
+        {
+            "used": bool(enrichment.get("results")),
+            "queries": enrichment.get("queries", [])[:3],
+            "results": [
+                {
+                    "title": item.get("title", ""),
+                    "url": item.get("url", ""),
+                    "note": truncate_text(item.get("description") or item.get("markdown_excerpt", ""), limits["enrichment_chars"]),
+                }
+                for item in enrichment.get("results", [])[: request["search_budget"]]
+            ],
+            "error": enrichment.get("error", ""),
+        },
+    )
+    asset_block = compact_json_block(
+        "Asset strategy",
+        {
+            "image_strategy": request["image_strategy"],
+            "reuse_source_images": request["reuse_source_images"],
+            "allow_external_images": request["allow_external_images"],
+            "asset_candidates": [
+                {
+                    "url": item["url"],
+                    "role": item.get("role", "general"),
+                    "alt": item.get("alt", ""),
+                }
+                for item in source_assets[:4]
+            ],
+        },
+    )
+
+    implementation_block = compact_json_block(
+        "Implementation expectations",
+        {
+            "build_target": "./dist/index.html",
+            "design_source": "internal design family + component blueprint + concept blueprint",
+            "content_source": "use source facts/proof/assets, not source visual direction",
+            "must_rebuild": ["legacy menu/services content in-page", "location/footer block", "hero and CTA copy"],
+            "must_include": ["title", "meta description", "canonical", "OG/Twitter tags", "one H1", "JSON-LD"],
+            "proof_policy": "omit weak proof rather than invent it",
+            "map_policy": "use a real map embed or directions link whenever real location data exists",
+        },
+    )
 
     parts = {
         "stable_prefix": stable_prefix,
