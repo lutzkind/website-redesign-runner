@@ -1131,6 +1131,225 @@ def infer_conversion_priority_for_subtype(industry: str, subtype: str) -> list[s
     return infer_conversion_priority(industry)
 
 
+INDUSTRY_DETECTION_RULES = {
+    "restaurant": {
+        "strong": {
+            "restaurant",
+            "diner",
+            "menu",
+            "breakfast",
+            "lunch",
+            "dinner",
+            "brunch",
+            "omelette",
+            "omelet",
+            "pancakes",
+            "burgers",
+            "sandwiches",
+            "reservations",
+        },
+        "weak": {"food", "eat", "kitchen", "cocktails", "drinks", "dessert", "appetizers"},
+    },
+    "bakery": {
+        "strong": {"bakery", "pastry", "pastries", "bread", "cakes", "croissant", "cupcakes"},
+        "weak": {"dessert", "baked", "sweet"},
+    },
+    "cafe": {
+        "strong": {"cafe", "coffee", "espresso", "latte", "tea", "roastery"},
+        "weak": {"barista", "brew", "brunch"},
+    },
+    "bar": {
+        "strong": {"bar", "pub", "cocktail", "wine bar", "taproom", "brewery"},
+        "weak": {"drinks", "beer", "happy hour"},
+    },
+    "hotel": {
+        "strong": {"hotel", "inn", "resort", "suites", "lodging"},
+        "weak": {"stay", "rooms", "book a stay"},
+    },
+    "plumber": {
+        "strong": {"plumber", "plumbing", "drain cleaning", "water heater", "pipe repair"},
+        "weak": {"leak", "sewer", "fixture"},
+    },
+    "electrician": {
+        "strong": {"electrician", "electrical", "panel upgrade", "rewiring"},
+        "weak": {"generator", "lighting", "wiring"},
+    },
+    "hvac": {
+        "strong": {"hvac", "heating", "cooling", "air conditioning", "furnace"},
+        "weak": {"ac repair", "heat pump", "thermostat"},
+    },
+    "contractor": {
+        "strong": {"contractor", "construction", "remodeling", "renovation", "build"},
+        "weak": {"project", "estimate", "licensed"},
+    },
+    "roofer": {
+        "strong": {"roofing", "roofer", "roof repair", "roof replacement"},
+        "weak": {"shingles", "gutter", "storm damage"},
+    },
+    "landscaper": {
+        "strong": {"landscaping", "landscaper", "lawn care", "hardscape"},
+        "weak": {"mulch", "yard", "patio"},
+    },
+    "pest-control": {
+        "strong": {"pest control", "exterminator", "termite", "rodent"},
+        "weak": {"bugs", "inspection", "ants"},
+    },
+    "cleaning": {
+        "strong": {"cleaning service", "house cleaning", "maid service", "janitorial"},
+        "weak": {"deep clean", "move out clean", "office cleaning"},
+    },
+    "auto-detailing": {
+        "strong": {"auto detailing", "car detailing", "ceramic coating", "paint correction"},
+        "weak": {"vehicle", "wash", "interior detail"},
+    },
+    "dentist": {
+        "strong": {"dentist", "dental", "teeth cleaning", "oral health"},
+        "weak": {"smile", "tooth", "crown"},
+    },
+    "orthodontist": {
+        "strong": {"orthodontist", "braces", "invisalign", "orthodontics"},
+        "weak": {"aligners", "bite", "retainer"},
+    },
+    "chiropractor": {
+        "strong": {"chiropractor", "chiropractic", "spinal adjustment"},
+        "weak": {"back pain", "neck pain", "alignment"},
+    },
+    "medical": {
+        "strong": {"medical", "clinic", "physician", "patient care"},
+        "weak": {"appointment", "treatment", "healthcare"},
+    },
+    "medspa": {
+        "strong": {"med spa", "medspa", "botox", "filler", "laser treatment"},
+        "weak": {"aesthetic", "skin", "injectables"},
+    },
+    "vet": {
+        "strong": {"veterinary", "veterinarian", "animal hospital", "pet care"},
+        "weak": {"pets", "vaccination", "wellness exam"},
+    },
+    "legal": {
+        "strong": {"law firm", "attorney", "lawyer", "legal services"},
+        "weak": {"case", "litigation", "consultation"},
+    },
+    "accounting": {
+        "strong": {"accounting", "cpa", "tax preparation", "bookkeeping"},
+        "weak": {"payroll", "financial", "returns"},
+    },
+    "consulting": {
+        "strong": {"consulting", "advisor", "strategy", "business consulting"},
+        "weak": {"insights", "growth", "solutions"},
+    },
+    "salon": {
+        "strong": {"salon", "hair salon", "stylist", "hair color"},
+        "weak": {"cut", "blowout", "beauty"},
+    },
+    "spa": {
+        "strong": {"spa", "massage", "facial", "wellness spa"},
+        "weak": {"relax", "treatment", "bodywork"},
+    },
+    "fitness": {
+        "strong": {"fitness", "gym", "personal training", "workout"},
+        "weak": {"classes", "strength", "membership"},
+    },
+    "retail": {
+        "strong": {"shop", "store", "boutique", "collection"},
+        "weak": {"products", "new arrivals", "gift card"},
+    },
+    "florist": {
+        "strong": {"florist", "flowers", "bouquet", "floral"},
+        "weak": {"arrangements", "wedding flowers", "same day delivery"},
+    },
+    "jewelry": {
+        "strong": {"jewelry", "jewellery", "engagement ring", "necklace"},
+        "weak": {"bracelet", "earrings", "fine jewelry"},
+    },
+    "furniture": {
+        "strong": {"furniture", "sofa", "dining table", "home furnishings"},
+        "weak": {"living room", "bedroom", "chairs"},
+    },
+}
+
+
+def detect_industry_from_source(
+    request: dict,
+    source_summary: dict,
+    business_profile: dict,
+    enrichment: dict,
+) -> dict:
+    explicit_industry = request.get("industry", DEFAULT_INDUSTRY)
+    should_override = explicit_industry in {"", DEFAULT_INDUSTRY, "general"}
+    if not should_override:
+        return {
+            "industry": explicit_industry,
+            "source": "operator",
+            "confidence": 1.0,
+            "signals": [f"operator supplied industry={explicit_industry}"],
+            "scores": {explicit_industry: 1.0},
+        }
+
+    text_parts = [
+        request.get("website_url", ""),
+        request.get("hostname", ""),
+        source_summary.get("title", ""),
+        source_summary.get("description", ""),
+        source_summary.get("markdown_excerpt", ""),
+        business_profile.get("business_name", ""),
+        business_profile.get("address", ""),
+        business_profile.get("menu_url", ""),
+        " ".join(source_summary.get("top_links", [])[:8]),
+        " ".join(business_profile.get("core_highlights", [])[:8]),
+        " ".join(business_profile.get("external_enrichment_notes", [])[:4]),
+    ]
+    text = " ".join(part for part in text_parts if part).lower()
+    scores: dict[str, float] = {}
+    signals_by_industry: dict[str, list[str]] = {}
+
+    for industry, rule in INDUSTRY_DETECTION_RULES.items():
+        score = 0.0
+        signals: list[str] = []
+        for term in rule.get("strong", set()):
+            if term in text:
+                score += 2.0
+                signals.append(term)
+        for term in rule.get("weak", set()):
+            if term in text:
+                score += 0.75
+                signals.append(term)
+        if score > 0:
+            scores[industry] = round(score, 2)
+            signals_by_industry[industry] = signals[:8]
+
+    if business_profile.get("menu_url"):
+        scores["restaurant"] = round(scores.get("restaurant", 0.0) + 3.0, 2)
+        signals_by_industry.setdefault("restaurant", []).append("menu url")
+    if business_profile.get("hours"):
+        for hospitality in ("restaurant", "cafe", "bakery", "bar"):
+            if hospitality in scores:
+                scores[hospitality] = round(scores[hospitality] + 0.25, 2)
+
+    if not scores:
+        return {
+            "industry": "general",
+            "source": "inferred",
+            "confidence": 0.0,
+            "signals": [],
+            "scores": {},
+        }
+
+    best = max(scores, key=scores.get)
+    ordered_scores = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    top_score = ordered_scores[0][1]
+    runner_up = ordered_scores[1][1] if len(ordered_scores) > 1 else 0.0
+    confidence = min(1.0, 0.45 + ((top_score - runner_up) * 0.08) + min(top_score * 0.04, 0.35))
+
+    return {
+        "industry": best,
+        "source": "inferred",
+        "confidence": round(confidence, 2),
+        "signals": signals_by_industry.get(best, [])[:8],
+        "scores": {key: value for key, value in ordered_scores[:6]},
+    }
+
+
 def infer_business_subtype(request: dict, business_profile: dict, source_summary: dict) -> str:
     industry = request["industry"]
     text = " ".join(
@@ -2112,6 +2331,7 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
     result: dict = {
         "source": None,
         "enrichment": {"results": []},
+        "classification": {},
         "business_profile": {},
         "design_engine": {},
         "component_blueprint": {},
@@ -2167,8 +2387,22 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
         result["enrichment"],
         source_assets,
     )
+    classification = detect_industry_from_source(
+        request,
+        source_summary,
+        result["business_profile"],
+        result["enrichment"],
+    )
+    result["classification"] = classification
+    detected_industry = classification.get("industry") or request["industry"]
+    request["industry"] = detected_industry
+    result["business_profile"]["category"] = detected_industry
     (analysis_dir / "business-profile.json").write_text(
         json.dumps(result["business_profile"], indent=2),
+        encoding="utf-8",
+    )
+    (analysis_dir / "classification.json").write_text(
+        json.dumps(result["classification"], indent=2),
         encoding="utf-8",
     )
 
@@ -2229,11 +2463,11 @@ def profile_limits(profile: str) -> dict:
 
 def render_compact_skill_directives(skill_names: list[str], industry: str) -> str:
     lines = [
-        "- Audit the source site, preserve useful facts, and improve weak hierarchy or CTA paths.",
-        "- Establish one clear art direction before building; typography, palette, rhythm, and imagery should feel intentional.",
-        "- Recompose the page for narrative flow instead of preserving legacy ordering blindly.",
-        "- Deliver polished static HTML/CSS/JS in ./dist with strong mobile behavior and obvious conversion paths.",
-        "- Self-critique before finishing and fix any obvious generic, low-contrast, or weak-hierarchy issues.",
+        "- Preserve facts, improve hierarchy, and strengthen conversion paths.",
+        "- Pick one clear art direction before building.",
+        "- Recompose the page instead of restyling the legacy layout.",
+        "- Deliver polished static HTML/CSS/JS in ./dist with strong mobile behavior.",
+        "- Fix obvious generic, low-contrast, or weak-hierarchy issues before finishing.",
     ]
     if industry == "restaurant":
         lines.append("- For restaurants, prioritize appetite appeal, atmosphere, reservations, hours, location confidence, and concise menu highlights.")
@@ -2296,11 +2530,11 @@ def build_prompt_parts(request: dict, job_dir: Path) -> tuple[dict, list[str]]:
 
     stable_prefix = f"""You are redesigning a client's website into a polished static preview.
 
-Rules:
-- Build the redesigned static preview in ./dist.
-- Preserve business facts and intent from the source while improving hierarchy, clarity, and conversion.
+Core rules:
+- Build in ./dist and ensure ./dist/index.html exists.
+- Keep all asset paths relative.
+- Preserve facts, but improve clarity, conversion, and presentation.
 - Keep the result premium, art-directed, and previewable without a build step.
-- Ensure ./dist/index.html exists and all asset paths are relative.
 - Write a concise ./dist/redesign-summary.md before finishing.
 
 Working directives:
@@ -2308,17 +2542,13 @@ Working directives:
 """
 
     design_guardrails = """Pre-generation design guardrails:
-- Do not use overused default fonts like Inter, Roboto, Open Sans, Lato, Montserrat, or Arial as the primary personality font unless the selected design family explicitly calls for them.
-- Do not use gradient text, decorative background-clip text, or flashy AI-tell effects.
-- Ensure body text and CTA text clearly exceed WCAG AA contrast; do not leave near-failing warm-on-cream combinations.
-- Do not animate layout properties like width, height, padding, or margin. Prefer transform and opacity.
-- Avoid uppercase for long body copy; reserve it for short labels only.
-- Avoid generic SaaS hero composition, default Tailwind landing-page stacking, and interchangeable startup polish.
-- Build the first draft from the internal design family and concept blueprint. Do not rely on copied public-site patterns.
-- Always include a real location module near the footer with address, hours, phone, and a real map/embed or directions link.
-- Do not use old-site navigation links such as legacy menu/about/contact URLs in the redesigned preview.
-- Do not fabricate testimonials, review attributions, awards, ratings, or statistics that are not present in the extracted source facts or enrichment.
-- Rewrite source marketing copy; do not copy long source paragraphs verbatim into the redesign.
+- Avoid default-font personality, gradient text, and generic SaaS landing-page patterns.
+- Maintain strong body/CTA contrast and animate only transform/opacity.
+- Use the internal family, component blueprint, and concept blueprint as the primary design system.
+- Include a real location module near the footer with address, hours, phone, and a real map/embed or directions link.
+- Keep navigation internal to the preview; do not reuse legacy source-site URLs.
+- Do not fabricate testimonials, ratings, awards, or statistics.
+- Rewrite source marketing copy; do not lift long paragraphs verbatim.
 """
 
     operator_controls = f"""Operator controls:
@@ -2327,17 +2557,10 @@ Working directives:
 - Design family: {design_engine.get('family') or request.get('design_family') or 'auto'}
 - Generator profile: {request['generator_profile']}
 - Source expansion mode: {request['source_expansion_mode']}
-- Search enrichment: {request['search_enrichment']}
-- Search budget: {request['search_budget']}
-- Content audit: critique={request['content_critique']}, autofix={request['content_autofix']}
-- SEO audit: critique={request['seo_critique']}, autofix={request['seo_autofix']}
-- Lighthouse audit: critique={request['lighthouse_critique']}, autofix={request['lighthouse_autofix']}
-- Axe audit: critique={request['axe_critique']}, autofix={request['axe_autofix']}
-- Impeccable audit: critique={request['impeccable_critique']}, autofix={request['impeccable_autofix']}
+- Search enrichment: {request['search_enrichment']} (budget={request['search_budget']})
 - Design goal: {request['design_goal'] or 'General premium redesign'}
 - Brand notes: {request['brand_notes'] or 'None'}
 - Additional instructions: {request['extra_instructions'] or 'None'}
-- Prompt append: {request['prompt_append'] or 'None'}
 """
 
     business_profile_block = f"""Business profile:
@@ -2364,7 +2587,7 @@ Working directives:
 """
 
     content_integrity_block = f"""Content integrity requirements:
-- Business subtype: {content_blueprint.get('business_subtype', 'general')}
+- Subtype: {content_blueprint.get('business_subtype', 'general')}
 - Rewrite rule: {content_blueprint.get('rewrite_rule', '')}
 - Proof rule: {content_blueprint.get('proof_rule', '')}
 - Link rule: {content_blueprint.get('link_rule', '')}
@@ -2381,10 +2604,13 @@ Working directives:
 {chr(10).join(f"  - {item}" for item in content_blueprint.get('forbidden_urls', [])) or '  - None'}
 """
 
+    classification = source_context.get("classification", {})
     source_context_block = f"""Source website context:
 - URL: {request['website_url']}
 - Captured source HTML is available under ./source
 - Source title: {source_summary.get('title', '')}
+- Detected industry: {classification.get('industry', request['industry'])} (confidence={classification.get('confidence', 0.0):.2f}, source={classification.get('source', 'unknown')})
+- Detection signals: {summarize_value_list(classification.get('signals', []))}
 - Completeness score: {source.get('completeness', {}).get('score', 0.0):.2f}
 - Completeness notes:
 {chr(10).join(f"  - {item}" for item in source.get('completeness', {}).get('reasons', [])) or '  - None'}
@@ -2456,21 +2682,14 @@ Working directives:
     asset_block = "Image and asset strategy:\n" + render_asset_guidance(request, source_assets)
 
     implementation_block = """Implementation expectations:
-- Use the internal design family and concept blueprint as the dominant visual system.
-- The source website is for business facts, proof, usable assets, and service/menu details, not for visual inspiration.
-- Do not imitate or scrape public reference websites. Create a bespoke concept from the internal design family.
-- Re-express the source business in the selected family’s typography, spacing, component language, and section rhythm.
-- Treat the MagicUI-inspired component blueprint as concrete UI direction for the first pass, not optional inspiration.
-- The first draft should already feel art-directed and prospect-ready, not like a template adaptation.
-- The first draft must also be SEO-ready: title, description, canonical, OG/Twitter metadata, one clear H1, and valid LocalBusiness-style JSON-LD should already be present.
-- Include a real map or directions embed/link in the closing/footer area using the actual business location. Do not replace the location module with decorative imagery.
-- Do not send users back to the old website for key content. Rebuild critical content like menus, services, FAQs, and offers directly inside the redesign.
-- If trustworthy review copy or ratings are not available in the extracted source context, omit testimonial quotes rather than inventing them.
-- Rewrite key content according to the rewrite targets and required sections instead of restyling the source page one section at a time.
-- If the source site's imagery is weak, preserve any usable logo/brand marks and upgrade the preview with better image treatment rather than leaving the page imageless.
-- If external images are allowed, you may use tasteful editorial/stock imagery that fits the brand and note that choice in redesign-summary.md.
-- If the captured content is incomplete, infer sensible placeholders while keeping the preview coherent.
-- Avoid generic AI landing-page patterns, default fonts, flat section stacking, and startup-style feature grids.
+- Build from the internal design family, component blueprint, and concept blueprint.
+- Use the source for facts, proof, usable assets, and menu/service details, not for visual direction.
+- Rebuild key content inside the redesign instead of linking back to legacy pages.
+- Make the first draft prospect-ready: strong hero, clear CTA, persuasive rewritten copy, and real location info.
+- Include title, description, canonical, OG/Twitter tags, one clear H1, and valid LocalBusiness-style JSON-LD.
+- Use a real map or directions embed/link in the footer/location area; never replace it with decorative imagery.
+- If proof is weak, omit it rather than inventing it.
+- If imagery is weak, preserve usable brand assets and improve the image treatment without leaving the page visually empty.
 """
 
     parts = {
@@ -3425,7 +3644,7 @@ def process_job(job_id: str, request: dict) -> None:
         update_state(job_id, status="running", step="capturing-source", model=MODEL)
         source_context = analyze_site_context(job_dir, request)
         request["source_context"] = source_context
-        update_state(job_id, source_capture=source_context)
+        update_state(job_id, request=request, source_capture=source_context)
 
         if request["dry_run"]:
             _, applied_skills = build_prompt(request, job_dir)
