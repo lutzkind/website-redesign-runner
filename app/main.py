@@ -2022,9 +2022,22 @@ def detect_source_flags(request: dict, source_summary: dict, html: str) -> dict:
         bit for bit in [title, source_summary.get("description", ""), strip_html_tags(html)[:1200]] if bit
     ).lower()
     is_social_profile = host in SOCIAL_PROFILE_HOSTS
+    bot_challenge_terms = (
+        "just a moment",
+        "attention required",
+        "security verification",
+        "verify you're not a robot",
+        "verify you are not a robot",
+        "please wait while we verify",
+        "checking your browser",
+        "challenge-platform",
+        "g-recaptcha",
+        "grecaptcha",
+        "captcha",
+    )
     is_bot_challenge = (
-        "just a moment" in title
-        or "attention required" in title
+        any(term in title for term in bot_challenge_terms)
+        or any(term in combined_text for term in bot_challenge_terms)
         or "cloudflare" in lowered_html
         or "cf-chl" in lowered_html
     )
@@ -2094,6 +2107,30 @@ def should_enrich_source(request: dict, completeness: dict) -> bool:
         return True
     threshold = 0.65 if mode == "balanced" else 0.4
     return completeness.get("score", 0.0) < threshold
+
+
+def source_requires_manual_review(source: dict, completeness: dict) -> dict | None:
+    flags = source.get("flags", {}) if isinstance(source, dict) else {}
+    summary = source.get("summary", {}) if isinstance(source, dict) else {}
+    if flags.get("is_bot_challenge"):
+        return {
+            "reason": "bot_challenge",
+            "message": "Source website presented a bot/security verification page instead of real business content.",
+        }
+    if flags.get("fetch_failed"):
+        return {
+            "reason": "fetch_failed",
+            "message": "Source website could not be fetched reliably, so the redesign was rejected instead of hallucinating.",
+        }
+    markdown_excerpt = (summary.get("markdown_excerpt", "") or "").strip()
+    title = (summary.get("title", "") or "").strip().lower()
+    score = float(completeness.get("score", 0.0) or 0.0)
+    if score <= 0.05 and (not markdown_excerpt or len(markdown_excerpt) < 180):
+        return {
+            "reason": "insufficient_source_signal",
+            "message": f"Source website returned insufficient business content for a safe redesign (title={title or 'unknown'}, score={score:.2f}).",
+        }
+    return None
 
 
 def build_search_queries(request: dict, source_summary: dict) -> list[str]:
@@ -2952,8 +2989,11 @@ def analyze_site_context(job_dir: Path, request: dict) -> dict:
     top_links = source_summary.get("top_links", []) if isinstance(source_summary, dict) else []
     completeness = score_source_completeness(source_summary, source_assets, top_links)
     result["source"]["completeness"] = completeness
+    review_block = source_requires_manual_review(result["source"], completeness)
+    if review_block:
+        result["rejected"] = review_block
 
-    if should_enrich_source(request, completeness):
+    if not review_block and should_enrich_source(request, completeness):
         try:
             enrichment = enrich_source_context(request, source_summary)
             (analysis_dir / "search-enrichment.json").write_text(json.dumps(enrichment, indent=2), encoding="utf-8")
@@ -4635,6 +4675,12 @@ def process_job(job_id: str, request: dict) -> None:
         source_context = analyze_site_context(job_dir, request)
         request["source_context"] = source_context
         update_state(job_id, request=request, source_capture=source_context)
+        if source_context.get("rejected"):
+            rejection = source_context["rejected"]
+            raise RuntimeError(
+                rejection.get("message")
+                or "Source website did not provide enough valid business content to safely generate a redesign."
+            )
 
         if request["dry_run"]:
             _, applied_skills = build_prompt(request, job_dir)
@@ -4749,6 +4795,15 @@ def run_qualification(request: dict) -> dict:
     run_dir.mkdir(parents=True, exist_ok=True)
 
     source_context = analyze_site_context(run_dir, request)
+    if source_context.get("rejected"):
+        rejection = source_context["rejected"]
+        return {
+            "qualification_id": qualification_id,
+            "status": "blocked-source",
+            "source_blocked": rejection,
+            "business_profile": source_context.get("business_profile", {}),
+            "source_summary": source_context.get("source", {}).get("summary", {}),
+        }
     try:
         source_context["visual_audit"] = audit_source_visual_design(run_dir, request)
     except Exception as exc:
