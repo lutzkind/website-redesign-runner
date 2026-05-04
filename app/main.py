@@ -1938,6 +1938,65 @@ SOCIAL_PROFILE_HOSTS = {
     "www.linktr.ee",
 }
 
+CORPORATE_LOCATION_HOST_PREFIXES = {
+    "locations",
+    "restaurants",
+    "stores",
+    "shop",
+    "visit",
+}
+
+CORPORATE_LOCATION_PATH_TERMS = (
+    "/locations/",
+    "/location/",
+    "/restaurants/",
+    "/restaurant/",
+    "/stores/",
+    "/store/",
+    "/find-a-location",
+    "/find-location",
+)
+
+HOTEL_CHAIN_HOST_TERMS = {
+    "hilton",
+    "marriott",
+    "hyatt",
+    "ihg",
+    "wyndham",
+    "choicehotels",
+    "bestwestern",
+    "radissonhotels",
+    "motel6",
+}
+
+HOTEL_CHAIN_BRAND_TERMS = {
+    "hilton garden inn",
+    "hilton",
+    "hampton inn",
+    "homewood suites",
+    "doubletree",
+    "embassy suites",
+    "super 8",
+    "days inn",
+    "la quinta",
+    "ramada",
+    "microtel",
+    "motel 6",
+    "courtyard by marriott",
+    "marriott",
+    "residence inn",
+    "fairfield inn",
+    "holiday inn",
+    "avid hotel",
+    "candlewood suites",
+    "comfort inn",
+    "quality inn",
+    "sleep inn",
+    "best western",
+    "hyatt place",
+    "hyatt house",
+}
+
 
 def strip_html_tags(value: str) -> str:
     text = re.sub(r"(?is)<(script|style)[^>]*>.*?</\\1>", " ", value or "")
@@ -2016,10 +2075,16 @@ def detect_source_flags(request: dict, source_summary: dict, html: str) -> dict:
     website_url = request.get("website_url", "")
     parsed = urlparse(website_url)
     host = parsed.netloc.lower()
+    host_labels = [label for label in host.split(".") if label and label != "www"]
+    primary_label = host_labels[0] if host_labels else ""
     lowered_html = (html or "").lower()
     title = (source_summary.get("title", "") or "").strip().lower()
+    company_name = str(request.get("company_name", "") or "").strip().lower()
+    path = (parsed.path or "").lower()
     combined_text = " ".join(
-        bit for bit in [title, source_summary.get("description", ""), strip_html_tags(html)[:1200]] if bit
+        bit
+        for bit in [company_name, title, source_summary.get("description", ""), strip_html_tags(html)[:1200]]
+        if bit
     ).lower()
     is_social_profile = host in SOCIAL_PROFILE_HOSTS
     bot_challenge_terms = (
@@ -2052,10 +2117,22 @@ def detect_source_flags(request: dict, source_summary: dict, html: str) -> dict:
             "sign up for deals",
         )
     )
+    is_corporate_location_page = (
+        primary_label in CORPORATE_LOCATION_HOST_PREFIXES
+        or any(term in path for term in CORPORATE_LOCATION_PATH_TERMS)
+    )
+    hotel_like_context = any(term in combined_text for term in ("hotel", "inn", "resort", "suites", "lodging"))
+    is_chain_hotel_page = hotel_like_context and (
+        any(term in host for term in HOTEL_CHAIN_HOST_TERMS)
+        or any(term in combined_text for term in HOTEL_CHAIN_BRAND_TERMS)
+        or "/hotels/" in path
+    )
     return {
         "is_social_profile": is_social_profile,
         "is_bot_challenge": is_bot_challenge,
         "is_ordering_microsite": is_ordering_microsite,
+        "is_corporate_location_page": is_corporate_location_page,
+        "is_chain_hotel_page": is_chain_hotel_page,
     }
 
 
@@ -2601,6 +2678,14 @@ def assess_website_quality(request: dict, source_context: dict) -> dict:
         qualification_status = "review"
         summary = "The lead points to a social profile rather than a standalone website, so it should be handled in a separate outreach bucket."
         weak_signals.insert(0, "the provided URL is a social profile, not a standalone website")
+    elif source_flags.get("is_chain_hotel_page"):
+        qualification_status = "skip"
+        summary = "The lead resolves to a branded hotel chain page, so it is not a good redesign outreach target."
+        strong_signals.insert(0, "the site appears to be a branded hotel chain property page")
+    elif source_flags.get("is_corporate_location_page"):
+        qualification_status = "skip"
+        summary = "The lead resolves to a corporate location page rather than a standalone local business website."
+        strong_signals.insert(0, "the site appears to be a corporate location microsite")
     elif source_flags.get("fetch_failed"):
         qualification_status = "failed"
         summary = "The site could not be reliably fetched during automated evaluation, so this evaluation attempt should be treated as failed."

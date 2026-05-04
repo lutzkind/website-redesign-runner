@@ -97,6 +97,11 @@ Interpretation:
 - `skip`: site already looks competent enough that redesign outreach is lower priority
 - `failed`: the site could not be evaluated reliably because it was inaccessible, blocked, or challenge-gated
 
+Additional suppression rules:
+
+- obvious corporate location microsites are forced to `skip`
+- branded hotel-chain property pages are forced to `skip`
+
 ## Practical first pass
 
 Start strict. Only outreach `target` rows. Keep `review` rows in the table for later manual inspection, ignore `skip`, and treat `failed` as an evaluator failure state for retry or separate investigation.
