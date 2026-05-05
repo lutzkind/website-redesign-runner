@@ -2260,13 +2260,14 @@ def source_requires_manual_review(source: dict, completeness: dict) -> dict | No
 
 
 def build_search_queries(request: dict, source_summary: dict) -> list[str]:
+    profile = get_evaluator_industry_profile(request.get("industry", ""))
     title = source_summary.get("title", "") or ""
     description = source_summary.get("description", "") or ""
     base = title.split("-")[0].strip() or request["hostname"]
     queries = [base]
     if description:
         queries.append(f"{base} {description[:80]}")
-    queries.append(f"{base} reviews hours menu")
+    queries.append(f"{base} {profile['search_suffix']}")
     return queries
 
 
@@ -2335,7 +2336,69 @@ def is_restaurant_like_industry(industry: str) -> bool:
     )
 
 
-def score_contact_accessibility(business_profile: dict) -> tuple[float, list[str], list[str]]:
+def get_evaluator_industry_profile(industry: str) -> dict:
+    normalized = canonicalize_industry(industry or "")
+    hospitality_like = is_restaurant_like_industry(normalized) or normalized in {"hotel"}
+    service_area_like = normalized in {
+        "plumber",
+        "electrician",
+        "hvac",
+        "contractor",
+        "roofer",
+        "landscaper",
+        "pest-control",
+        "cleaning",
+        "auto-detailing",
+    }
+    appointment_like = normalized in {
+        "salon",
+        "medspa",
+        "dentist",
+        "orthodontist",
+        "medical",
+        "chiropractor",
+        "vet",
+        "fitness",
+        "wellness",
+    }
+    professional_like = normalized in {"legal", "accounting", "consulting"}
+    retail_like = normalized in {"retail", "florist", "boutique", "jewelry", "furniture"}
+
+    if hospitality_like:
+        offer_terms = ("menu", "food", "drinks", "order", "reserv", "private-dining", "catering")
+        search_suffix = "reviews hours menu reservations"
+    elif service_area_like:
+        offer_terms = ("service", "services", "repair", "install", "inspection", "estimate", "quote", "financing")
+        search_suffix = "services service area quote reviews"
+    elif appointment_like:
+        offer_terms = ("service", "services", "treatment", "treatments", "appointment", "book", "schedule", "care")
+        search_suffix = "services treatments appointments reviews"
+    elif professional_like:
+        offer_terms = ("service", "services", "practice-areas", "team", "about", "consultation", "expertise")
+        search_suffix = "services team consultation reviews"
+    elif retail_like:
+        offer_terms = ("shop", "store", "collection", "products", "catalog", "gift", "visit")
+        search_suffix = "products collections location reviews"
+    else:
+        offer_terms = ("service", "services", "products", "pricing", "quote", "solutions", "work", "about")
+        search_suffix = "services products reviews contact"
+
+    return {
+        "normalized_industry": normalized,
+        "hospitality_like": hospitality_like,
+        "service_area_like": service_area_like,
+        "appointment_like": appointment_like,
+        "professional_like": professional_like,
+        "retail_like": retail_like,
+        "expects_hours": hospitality_like or appointment_like or retail_like,
+        "expects_mappable_location": not service_area_like,
+        "offer_terms": offer_terms,
+        "search_suffix": search_suffix,
+    }
+
+
+def score_contact_accessibility(request: dict, business_profile: dict) -> tuple[float, list[str], list[str]]:
+    profile = get_evaluator_industry_profile(request.get("industry", ""))
     score = 0.0
     strong: list[str] = []
     weak: list[str] = []
@@ -2350,16 +2413,22 @@ def score_contact_accessibility(business_profile: dict) -> tuple[float, list[str
         strong.append("address is present")
     else:
         weak.append("address was not detected")
-    if business_profile.get("hours"):
-        score += 5
-        strong.append("hours are visible")
+    if profile["expects_hours"]:
+        if business_profile.get("hours"):
+            score += 5
+            strong.append("hours are visible")
+        else:
+            weak.append("hours were not detected")
     else:
-        weak.append("hours were not detected")
-    if business_profile.get("maps_query_url"):
         score += 5
-        strong.append("location can be mapped")
+    if profile["expects_mappable_location"]:
+        if business_profile.get("maps_query_url"):
+            score += 5
+            strong.append("location can be mapped")
+        else:
+            weak.append("no mappable location was found")
     else:
-        weak.append("no mappable location was found")
+        score += 5
     return score, strong, weak
 
 
@@ -2368,25 +2437,25 @@ def score_page_coverage(
     business_profile: dict,
     top_links: list[str],
 ) -> tuple[float, dict, list[str], list[str]]:
+    profile = get_evaluator_industry_profile(request.get("industry", ""))
     link_blob = "\n".join(top_links or []).lower()
     found: dict[str, bool] = {}
 
     found["contact"] = any(term in link_blob for term in ("contact", "location", "directions", "visit-us"))
     found["about"] = any(term in link_blob for term in ("about", "story", "team", "our-story", "about-us"))
-    if request.get("industry") in {"restaurant", "cafe", "bakery", "bar"}:
+    if profile["hospitality_like"]:
         found["offer"] = bool(business_profile.get("menu_url")) or any(
-            term in link_blob for term in ("menu", "food", "drinks", "order")
+            term in link_blob for term in profile["offer_terms"]
         )
     else:
         found["offer"] = any(
-            term in link_blob for term in ("service", "services", "pricing", "quote", "solutions", "work")
+            term in link_blob for term in profile["offer_terms"]
         )
     found["proof"] = any(
         term in link_blob for term in ("review", "reviews", "testimonial", "testimonials", "gallery", "portfolio", "case-study")
     )
 
-    restaurant_like = is_restaurant_like_industry(request.get("industry", ""))
-    if restaurant_like:
+    if profile["hospitality_like"]:
         if not found["contact"] and (business_profile.get("phone") or business_profile.get("address") or business_profile.get("hours")):
             found["contact"] = True
         if not found["offer"] and business_profile.get("menu_url"):
@@ -2571,7 +2640,7 @@ def assess_website_quality(request: dict, source_context: dict) -> dict:
         weak_signals.append("very few internal navigation links were discovered")
     content_score = min(content_score, 20)
 
-    contact_score, contact_strong, contact_weak = score_contact_accessibility(business_profile)
+    contact_score, contact_strong, contact_weak = score_contact_accessibility(request, business_profile)
     strong_signals.extend(contact_strong)
     weak_signals.extend(contact_weak)
 

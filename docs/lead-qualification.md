@@ -85,6 +85,14 @@ The runner now scores ten buckets:
 - accessibility baseline
 - site structure
 
+The evaluator is no longer restaurant-only. It now adapts its expectations across local-business categories:
+
+- hospitality businesses bias toward menus, reservations, hours, and visit confidence
+- service-area businesses bias toward services, estimate/quote paths, and contact clarity rather than store hours
+- appointment-led businesses bias toward treatments/services, booking, and trust
+- professional businesses bias toward team, expertise, consultation, and service clarity
+- retail businesses bias toward products/collections plus visit-or-shop confidence
+
 `visual design` is evaluated with a browser-based audit of the live source site. It looks at headline scale, body text readability, CTA presence, button contrast, above-the-fold imagery, font consistency, and visible clutter rather than only the scraped HTML text.
 `technical health` is based on a live Lighthouse run against the source site.
 `accessibility baseline` is based on a live axe audit against the source site.
